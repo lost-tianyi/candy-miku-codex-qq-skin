@@ -112,23 +112,5 @@
   },
   "promoTitle": "Candy Miku",
   "promoSub": "Miku QQ Skin",
-  "promoUrl": "https://github.com/zhulin025/Codex-QQ-Skin",
-  "petFrames": [
-    {
-      "state": "idle",
-      "image": "miku-pet-idle.png"
-    },
-    {
-      "state": "wave",
-      "image": "miku-pet-wave.png"
-    },
-    {
-      "state": "thinking",
-      "image": "miku-pet-thinking.png"
-    },
-    {
-      "state": "working",
-      "image": "miku-pet-working.png"
-    }
-  ]
+  "promoUrl": "https://github.com/zhulin025/Codex-QQ-Skin"
 }
