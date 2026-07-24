@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "kind": "qq-stable",
+  "id": "preset-candy-miku",
+  "name": "Candy Miku",
+  "brandSubtitle": "MIKU QQ SKIN",
+  "tagline": "把薄荷色的歌声铺进 Codex 工作台。",
+  "projectPrefix": "Miku 项目 · ",
+  "projectLabel": "🎵  选择 Miku 项目",
+  "statusText": "CANDY MIKU ONLINE",
+  "quote": "SING WITH CODEX",
+  "image": "background.png",
+  "pet": "companion-closeup.png",
+  "overlayPet": "miku-overlay-idle.png",
+  "overlayLive2D": {
+    "width": 420,
+    "height": 520,
+    "defaultState": "idle",
+    "layers": [
+      {
+        "id": "base",
+        "image": "miku-l2d-base.png",
+        "z": 10,
+        "role": "base",
+        "pivotX": 0.5,
+        "pivotY": 0.6255
+      }
+    ],
+    "states": {
+      "idle": {
+        "layers": [
+          {
+            "id": "base",
+            "image": "miku-l2d-base.png",
+            "z": 10,
+            "role": "base",
+            "pivotX": 0.5,
+            "pivotY": 0.6255
+          }
+        ]
+      },
+      "wave": {
+        "layers": [
+          {
+            "id": "base",
+            "image": "miku-l2d-wave.png",
+            "z": 10,
+            "role": "base",
+            "pivotX": 0.5,
+            "pivotY": 0.6287307692307692
+          }
+        ]
+      },
+      "thinking": {
+        "layers": [
+          {
+            "id": "base",
+            "image": "miku-l2d-thinking.png",
+            "z": 10,
+            "role": "base",
+            "pivotX": 0.5,
+            "pivotY": 0.6255
+          }
+        ]
+      },
+      "working": {
+        "layers": [
+          {
+            "id": "base",
+            "image": "miku-l2d-working.png",
+            "z": 10,
+            "role": "base",
+            "pivotX": 0.5,
+            "pivotY": 0.6255
+          }
+        ]
+      }
+    }
+  },
+  "avatar": "avatar.png",
+  "appearance": "light",
+  "art": {
+    "safeArea": "left",
+    "taskMode": "ambient",
+    "focusX": 0.5,
+    "focusY": 0.5
+  },
+  "layout": {
+    "mode": "classic-three-pane",
+    "rightPanel": "open",
+    "minWidth": 1180,
+    "rightWidth": 300
+  },
+  "sound": {
+    "enabled": true,
+    "volume": 0.48,
+    "completed": "cough",
+    "approval": "alert",
+    "online": "knock"
+  },
+  "colors": {
+    "background": "#F7FFFC",
+    "panel": "#FFFFFF",
+    "panelAlt": "#F3FFFB",
+    "accent": "#22D8C8",
+    "accentAlt": "#FF79B8",
+    "secondary": "#B9F45E",
+    "highlight": "#FFB8DA",
+    "text": "#16333A",
+    "muted": "#5E7B82",
+    "line": "rgba(34, 216, 200, .30)"
+  },
+  "promoTitle": "Candy Miku",
+  "promoSub": "Miku QQ Skin",
+  "promoUrl": "https://github.com/zhulin025/Codex-QQ-Skin",
+  "petFrames": [
+    {
+      "state": "idle",
+      "image": "miku-pet-idle.png"
+    },
+    {
+      "state": "wave",
+      "image": "miku-pet-wave.png"
+    },
+    {
+      "state": "thinking",
+      "image": "miku-pet-thinking.png"
+    },
+    {
+      "state": "working",
+      "image": "miku-pet-working.png"
+    }
+  ]
+}
