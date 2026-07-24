@@ -3,7 +3,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
-THEME_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+THEME_PACK="$REPO_ROOT/theme"
 THEME_ID="preset-candy-miku"
 STATE_ROOT="${CODEX_QQ_SKIN_STATE:-$HOME/Library/Application Support/CodexQQSkin}"
 DEST="$STATE_ROOT/themes/$THEME_ID"
@@ -22,7 +23,7 @@ notify() {
   printf '%s\n' "$1"
 }
 
-[ -f "$THEME_ROOT/theme.json" ] || { alert "theme.json missing in $THEME_ROOT"; exit 1; }
+[ -f "$THEME_PACK/theme.json" ] || { alert "theme/theme.json missing in $REPO_ROOT"; exit 1; }
 
 # Prefer the working tree that already contains Candy Miku / miku mode support.
 CANDIDATES=(
@@ -50,39 +51,31 @@ fi
 SWITCH="$QQ_ROOT/scripts/switch-theme-macos.sh"
 [ -x "$SWITCH" ] || { alert "缺少 switch-theme-macos.sh"; exit 1; }
 
+copy_theme_files() {
+  local dest="$1"
+  /bin/mkdir -p "$dest"
+  /bin/chmod 700 "$dest" 2>/dev/null || true
+  local entry
+  for entry in "$THEME_PACK"/*; do
+    [ -f "$entry" ] || continue
+    /bin/cp -f "$entry" "$dest/"
+  done
+  /bin/chmod 600 "$dest"/* 2>/dev/null || true
+}
+
 notify "正在安装主题到皮肤库…"
-/bin/mkdir -p "$DEST"
-/bin/chmod 700 "$DEST" 2>/dev/null || true
+copy_theme_files "$DEST"
 
-# Runtime assets only (top-level files). Keep docs/sources/scripts out of live theme dir.
-for entry in "$THEME_ROOT"/*; do
-  [ -f "$entry" ] || continue
-  case "$(basename "$entry")" in
-    README.md|.DS_Store|*.command) continue ;;
-  esac
-  /bin/cp -f "$entry" "$DEST/"
-done
-/bin/chmod 600 "$DEST"/* 2>/dev/null || true
-
-# Also seed into QQ Skin presets/ so hot-apply / bundled seed stay consistent.
+# Also seed into QQ Skin presets/ (flat layout required by Codex QQ Skin).
 PRESET_DEST="$QQ_ROOT/presets/$THEME_ID"
 if [ -d "$QQ_ROOT/presets" ]; then
-  /bin/mkdir -p "$PRESET_DEST"
-  for entry in "$THEME_ROOT"/*; do
-    [ -f "$entry" ] || continue
-    case "$(basename "$entry")" in
-      README.md|.DS_Store|*.command) continue ;;
-    esac
-    /bin/cp -f "$entry" "$PRESET_DEST/"
-  done
-  if [ -d "$THEME_ROOT/sources" ]; then
+  copy_theme_files "$PRESET_DEST"
+  if [ -d "$REPO_ROOT/sources" ]; then
     /bin/rm -rf "$PRESET_DEST/sources"
-    /bin/cp -R "$THEME_ROOT/sources" "$PRESET_DEST/sources"
+    /bin/cp -R "$REPO_ROOT/sources" "$PRESET_DEST/sources"
   fi
-  if [ -d "$THEME_ROOT/scripts" ]; then
-    /bin/mkdir -p "$PRESET_DEST/scripts"
-    /bin/cp -f "$THEME_ROOT/scripts/"*.py "$PRESET_DEST/scripts/" 2>/dev/null || true
-  fi
+  /bin/mkdir -p "$PRESET_DEST/scripts"
+  /bin/cp -f "$REPO_ROOT/scripts/make-live2d-layers.py" "$PRESET_DEST/scripts/" 2>/dev/null || true
 fi
 
 notify "正在启动 Candy Miku…"

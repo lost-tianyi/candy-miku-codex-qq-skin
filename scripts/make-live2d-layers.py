@@ -4,8 +4,10 @@
 Each state is one full cutout on a shared 420×520 canvas (no hard layer splits).
 Blink stays off; avatar-overlay inject only applies chest-pivot breath/sway.
 
-Sources live in ../sources/{idle,wave,thinking,working}.png
-(thinking source already includes the mint '?').
+Layout:
+  sources/{idle,wave,thinking,working}.png  → input cutouts
+  theme/miku-l2d-*.png                      → output canvases
+  theme/theme.json / overlay-live2d.json    → synced metadata
 """
 
 from __future__ import annotations
@@ -16,10 +18,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parents[1]
-SOURCES = ROOT / "sources"
+REPO = Path(__file__).resolve().parents[1]
+THEME = REPO / "theme"
+SOURCES = REPO / "sources"
 CANVAS = (420, 520)
-OUT_META = ROOT / "overlay-live2d.json"
+OUT_META = THEME / "overlay-live2d.json"
 BUILD_STATES = ("idle", "wave", "thinking", "working")
 
 
@@ -71,6 +74,7 @@ def layer_spec(image: str, pivot_y: float, z: int = 10) -> dict:
 
 
 def build() -> dict:
+    THEME.mkdir(parents=True, exist_ok=True)
     states: dict[str, dict] = {}
 
     for state in BUILD_STATES:
@@ -79,11 +83,11 @@ def build() -> dict:
         canvas, meta = place_on_canvas(src)
         pivot_y = meta["chest_y"] / CANVAS[1]
         out_name = "miku-l2d-base.png" if state == "idle" else f"miku-l2d-{state}.png"
-        canvas.save(ROOT / out_name, optimize=True)
+        canvas.save(THEME / out_name, optimize=True)
         if state == "idle":
-            canvas.save(ROOT / "miku-overlay-idle.png", optimize=True)
+            canvas.save(THEME / "miku-overlay-idle.png", optimize=True)
         states[state] = {"layers": [layer_spec(out_name, pivot_y)]}
-        print(f"  wrote {out_name} pivotY={pivot_y:.4f}")
+        print(f"  wrote theme/{out_name} pivotY={pivot_y:.4f}")
 
     idle_layers = states["idle"]["layers"]
     config = {
@@ -95,7 +99,7 @@ def build() -> dict:
     }
     OUT_META.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
-    theme_path = ROOT / "theme.json"
+    theme_path = THEME / "theme.json"
     theme = json.loads(theme_path.read_text(encoding="utf-8"))
     theme["overlayPet"] = "miku-overlay-idle.png"
     theme["overlayLive2D"] = {
@@ -106,7 +110,7 @@ def build() -> dict:
         "states": states,
     }
     theme_path.write_text(json.dumps(theme, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print("updated theme.json +", OUT_META.name)
+    print("updated theme/theme.json +", OUT_META.name)
     return config
 
 
