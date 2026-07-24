@@ -20,27 +20,44 @@
 
 ## 效果预览
 
-### Codex 主界面
-
-右侧 Companion 为特写大图；Q 版只出现在浮动宠物窗口。
+### 新建任务
 
 <p align="center">
-  <img src="./docs/previews/codex-ui.jpg" alt="Candy Miku Codex 主界面" width="960">
+  <img src="./docs/previews/codex-new-task.jpg" alt="Candy Miku 新建任务界面" width="960">
 </p>
 
-### Companion 伙伴卡
+### 聊天界面
+
+右侧同时展示 Codex 成长中心与 Codex 伙伴；可通过「打开宠物」唤出浮动宠物。
 
 <p align="center">
-  <img src="./docs/previews/codex-companion.jpg" alt="Companion 特写" width="420">
+  <img src="./docs/previews/codex-chat.jpg" alt="Candy Miku 聊天界面" width="960">
 </p>
 
-### 浮动宠物 · 四态（Q 版）
+---
 
-点击「打开宠物」后显示；随 Codex 任务状态切换：
+## 特性介绍
 
-<p align="center">
-  <img src="./docs/previews/codex-pet-states.jpg" alt="浮动宠物四态" width="960">
-</p>
+Candy Miku 运行在 Codex QQ Skin 之上，右侧栏会启用三组特色能力：
+
+### Codex 成长中心
+
+- 读取本机 Codex 用量（今日 / 近 7 天 / 历史累计），并展示七日趋势图。  
+- 按活跃日与用量档位计算成长值，以 QQ 经典的星、月、日、冠显示等级。  
+- 支持「总用量 / 净用量」切换；数据只留在本机，不上传 prompt 或 API Key。  
+- 点击「资料」可回到 Codex 原生输出/来源面板，再点「成长统计」返回。
+
+### Codex 伙伴
+
+- 右侧固定伙伴卡，Candy Miku 使用 `companion-closeup.png` **特写大图**（非 Q 版）。  
+- 显示在线状态文案，并提供快捷操作：打开宠物、终端、声音开关。  
+- 任务状态变化时会更新状态文案与音效；伙伴主图保持特写，不随 Q 版帧切换。
+
+### Codex 宠物
+
+- 点击伙伴卡「打开宠物」打开原生浮动窗口。  
+- 使用 Q 版 Live2D-lite：整身抠图 + 胸腔枢轴呼吸 / 摇摆（无眨眼）。  
+- 随 Codex 任务状态自动换姿：
 
 | 姿态 | Codex 状态 | 资产 |
 |------|------------|------|
@@ -108,7 +125,7 @@ bash scripts/switch-theme-macos.sh --id preset-candy-miku
 
 ## 使用说明
 
-1. 启动后 Codex 右侧应出现 **Candy Miku Companion 特写**。  
+1. 启动后 Codex 右侧应出现 **成长中心** 与 **Candy Miku Companion 特写**。  
 2. 点击「打开宠物」打开 **Q 版浮动宠物**。  
 3. 任务 `running` / `approval` / `completed` 时，浮动宠物会切换姿态；Companion 卡保持特写不变。  
 
@@ -155,3 +172,9 @@ python3 scripts/make-live2d-layers.py
 ## 素材与商标
 
 Hatsune Miku / 初音未来等相关形象权利归 Crypton Future Media 等权利人所有。本主题仅作 Codex QQ Skin 的非官方外观示例。
+
+---
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=lost-tianyi/candy-miku-codex-qq-skin&type=Date)](https://www.star-history.com/#lost-tianyi/candy-miku-codex-qq-skin&Date)
