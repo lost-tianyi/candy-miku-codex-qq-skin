@@ -3,7 +3,7 @@
 薄荷糖果色 Hatsune Miku 主题预设，用于 [Codex QQ Skin](https://github.com/zhulin025/Codex-QQ-Skin)。
 
 - 经典三栏 QQ 外框 + mint / pink candy 配色  
-- Companion 伙伴卡使用**特写大图**（`companion-closeup.png`）  
+- Companion 伙伴卡使用**特写大图**（`theme/companion-closeup.png`）  
 - 「打开宠物」浮动 overlay 使用 **Q 版 Live2D-lite** 四态  
 - 完成 / 审批 / 上线音效  
 
@@ -61,10 +61,37 @@ Candy Miku 运行在 Codex QQ Skin 之上，右侧栏会启用三组特色能力
 
 | 姿态 | Codex 状态 | 资产 |
 |------|------------|------|
-| Idle | `idle` / `offline` | `miku-l2d-base.png` |
-| Wave | `completed` | `miku-l2d-wave.png` |
-| Thinking | `approval` | `miku-l2d-thinking.png` |
-| Working | `running` | `miku-l2d-working.png` |
+| Idle | `idle` / `offline` | `theme/miku-l2d-base.png` |
+| Wave | `completed` | `theme/miku-l2d-wave.png` |
+| Thinking | `approval` | `theme/miku-l2d-thinking.png` |
+| Working | `running` | `theme/miku-l2d-working.png` |
+
+---
+
+## 仓库结构
+
+```text
+candy-miku-codex-qq-skin/
+├── README.md
+├── Start Candy Miku.command      # 一键启动入口
+├── theme/                        # ★ 可安装主题包（扁平，供 QQ Skin 直接读取）
+│   ├── theme.json
+│   ├── overlay-live2d.json
+│   ├── background.png
+│   ├── avatar.png
+│   ├── companion-closeup.png     # Companion 特写
+│   ├── miku-overlay-idle.png
+│   └── miku-l2d-*.png            # 浮动宠物 Q 版四态
+├── sources/                      # Live2D 重建用抠图源
+├── scripts/
+│   ├── start-candy-miku-macos.sh # 安装 theme/ 并启动
+│   └── make-live2d-layers.py     # sources/ → theme/miku-l2d-*
+├── docs/previews/                # README 实机预览图
+└── archive/pet-q/                # 旧 Q 版 Companion 帧备份（不安装）
+```
+
+> Codex QQ Skin 的主题库要求资源与 `theme.json` 同级（文件名引用）。  
+> 因此安装时只会把 `theme/` 下的文件拷到 `themes/preset-candy-miku/`。
 
 ---
 
@@ -90,8 +117,8 @@ chmod +x "Start Candy Miku.command" scripts/start-candy-miku-macos.sh
 
 脚本会：
 
-1. 把主题安装到 `~/Library/Application Support/CodexQQSkin/themes/preset-candy-miku`  
-2. 同步到本机 Codex QQ Skin 的 `presets/`（若找得到）  
+1. 把 `theme/` 安装到 `~/Library/Application Support/CodexQQSkin/themes/preset-candy-miku`  
+2. 同步到本机 Codex QQ Skin 的 `presets/preset-candy-miku/`（扁平布局）  
 3. 调用 `switch-theme-macos.sh --id preset-candy-miku`（`miku` 模式）启动  
 
 若 QQ Skin 不在默认路径，可手动指定：
@@ -101,12 +128,14 @@ export CODEX_QQ_SKIN_ROOT="/path/to/Codex-QQ-Skin"
 ./scripts/start-candy-miku-macos.sh
 ```
 
-### 方式 B：放进 QQ Skin 的 presets 后切换
+### 方式 B：手动拷贝 theme 包
 
 ```bash
-cd /path/to/Codex-QQ-Skin/presets
-git clone https://github.com/lost-tianyi/candy-miku-codex-qq-skin.git preset-candy-miku
-cd ..
+SRC=/path/to/candy-miku-codex-qq-skin/theme
+DEST=/path/to/Codex-QQ-Skin/presets/preset-candy-miku
+mkdir -p "$DEST"
+cp -f "$SRC"/* "$DEST/"
+cd /path/to/Codex-QQ-Skin
 bash scripts/switch-theme-macos.sh --id preset-candy-miku
 ```
 
@@ -118,8 +147,6 @@ bash scripts/switch-theme-macos.sh --id preset-candy-miku
 cd /path/to/Codex-QQ-Skin
 bash scripts/switch-theme-macos.sh --id preset-candy-miku
 ```
-
-或使用桌面启动器（若已创建）：`启动 Candy Miku.command`。
 
 ---
 
@@ -139,33 +166,17 @@ window.__CODEX_QQ_SKIN_AVATAR_OVERLAY__.getDebugState()
 
 ---
 
-## 目录结构
-
-```text
-candy-miku-codex-qq-skin/
-├── Start Candy Miku.command          # 一键启动
-├── scripts/
-│   ├── start-candy-miku-macos.sh     # 安装主题并启动
-│   └── make-live2d-layers.py         # 从 sources/ 重建 Q 版画布
-├── theme.json
-├── background.png / avatar.png
-├── companion-closeup.png             # Companion 特写（非 Q 版）
-├── miku-overlay-idle.png
-├── miku-l2d-*.png                    # 浮动宠物 Q 版四态
-├── miku-pet-*.png                    # Q 版备份素材（不用于 Companion）
-├── sources/                          # 重建源图
-└── docs/previews/                    # Codex 实机预览图
-```
-
----
-
 ## 重建 Q 版 Live2D 画布
+
+修改 `sources/{idle,wave,thinking,working}.png` 后：
 
 ```bash
 python3 scripts/make-live2d-layers.py
 ```
 
-依赖：`Pillow`、`numpy`。`defaultState` 固定为 `idle`。
+输出写入 `theme/miku-l2d-*.png`，并同步 `theme/theme.json` / `theme/overlay-live2d.json`。
+
+依赖：`Pillow`、`numpy`。
 
 ---
 
