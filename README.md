@@ -1,4 +1,4 @@
-# Candy Miku
+# Candy Miku Skin for Codex
 
 薄荷糖果色 Hatsune Miku 主题预设，用于 [Codex QQ Skin](https://github.com/zhulin025/Codex-QQ-Skin)。
 
