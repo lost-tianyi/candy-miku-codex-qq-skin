@@ -482,13 +482,13 @@ stop_recorded_injector() {
 # Safe for rebrand cleanup (dream-skin → qq-skin): only processes that literally
 # run injector.mjs --watch from an install or repo path are signalled.
 # True when a process command line is one of our skin injectors.
-# Keep this loose: macOS `ps` often truncates argv, so requiring the full
-# "injector.mjs --watch --port" suffix leaves zombie injectors alive — and those
-# zombies keep re-applying an old in-memory CSS payload over the fresh one.
+# Keep this targeted: only persistent watcher processes should be stopped here.
+# One-shot validation commands and wrapper shells can contain this script path
+# in their command text; killing them makes launch/apply flows exit with SIGTERM.
 is_skin_injector_command() {
   local command_line="$1"
   case "$command_line" in
-    *injector.mjs*)
+    *injector.mjs*--watch*)
       case "$command_line" in
         *codex-qq-skin*|*codex-dream-skin*|*codex-qq-skin-studio*|*codex-dream-skin-studio*|*codex-qq-skin/scripts*|*downloads/codex-qq-skin*)
           return 0
@@ -517,7 +517,7 @@ stop_known_skin_injectors() {
     /bin/kill -TERM "$pid" 2>/dev/null || true
   done < <(/bin/ps -axo pid=,command= 2>/dev/null || true)
 
-  /bin/sleep 0.35
+  /bin/sleep 1.2
   while read -r pid command_line; do
     [ -n "$pid" ] || continue
     command_line="$(printf '%s' "$command_line" | /usr/bin/tr '[:upper:]' '[:lower:]')"
@@ -530,12 +530,36 @@ stop_known_skin_injectors() {
 launch_injector_daemon() {
   local port="$1"
   local pid=""
+  local command_line=""
   local deadline=$((SECONDS + 10))
   : > "$INJECTOR_LOG"
   : > "$INJECTOR_ERROR_LOG"
   /bin/launchctl remove "$INJECTOR_JOB_LABEL" >/dev/null 2>&1 || true
 
-  # Prefer a direct background process — launchctl submit is unreliable on newer macOS.
+  # Prefer launchctl for the persistent watcher.  In several GUI/terminal
+  # launch paths, a plain "nohup ... &" child can be reaped when the wrapper
+  # process exits, leaving the UI injected but without a watcher to handle
+  # refresh/theme requests.
+  /bin/launchctl submit -l "$INJECTOR_JOB_LABEL" -o "$INJECTOR_LOG" -e "$INJECTOR_ERROR_LOG" -- \
+    "$NODE" "$INJECTOR" --watch --port "$port" --theme-dir "$THEME_DIR" >/dev/null 2>&1 || true
+  /bin/launchctl kickstart -k "gui/$(/usr/bin/id -u)/$INJECTOR_JOB_LABEL" >/dev/null 2>&1 || true
+  /bin/sleep 1.2
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    # Detect the actual node process by command line.  launchctl can report a
+    # short-lived PID while the real watcher continues as an adjacent process,
+    # so do not trust the launchctl "pid =" field for the recorded state.
+    pid="$(/bin/ps -axo pid=,command= | /usr/bin/awk -v inj="$INJECTOR" -v port="$port" '
+      index($0, inj) && index($0, "--watch") && index($0, "--port " port " --theme-dir ") { print $1; exit }
+    ')"
+    if [ -n "$pid" ] && /bin/kill -0 "$pid" 2>/dev/null; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+    /bin/sleep 0.2
+  done
+
+  # Fallback: direct detached process.  This still works in simple shells, but
+  # is no longer the primary path because some launchers clean up children.
   /usr/bin/nohup "$NODE" "$INJECTOR" --watch --port "$port" --theme-dir "$THEME_DIR" \
     >>"$INJECTOR_LOG" 2>>"$INJECTOR_ERROR_LOG" &
   pid="$!"
@@ -544,19 +568,8 @@ launch_injector_daemon() {
     printf '%s\n' "$pid"
     return 0
   fi
-
-  # Fallback: launchctl submit
-  /bin/launchctl submit -l "$INJECTOR_JOB_LABEL" -o "$INJECTOR_LOG" -e "$INJECTOR_ERROR_LOG" -- \
-    "$NODE" "$INJECTOR" --watch --port "$port" --theme-dir "$THEME_DIR" >/dev/null 2>&1 || true
-  /bin/launchctl kickstart -k "gui/$(/usr/bin/id -u)/$INJECTOR_JOB_LABEL" >/dev/null 2>&1 || true
+  deadline=$((SECONDS + 10))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    pid="$(/bin/launchctl print "gui/$(/usr/bin/id -u)/$INJECTOR_JOB_LABEL" 2>/dev/null \
-      | /usr/bin/awk '/^[[:space:]]*pid = [0-9]+/{print $3; exit}')"
-    if [ -n "$pid" ] && /bin/kill -0 "$pid" 2>/dev/null; then
-      printf '%s\n' "$pid"
-      return 0
-    fi
-    # Also detect the nohup node process by command line
     pid="$(/bin/ps -axo pid=,command= | /usr/bin/awk -v inj="$INJECTOR" -v port="$port" '
       index($0, inj) && index($0, "--watch") && index($0, "--port " port " --theme-dir ") { print $1; exit }
     ')"
@@ -648,7 +661,11 @@ hot_reapply_theme() {
   if [ -n "$inj_pid" ] && /bin/kill -0 "$inj_pid" 2>/dev/null; then
     return 0
   fi
-  stop_recorded_injector 2>/dev/null || return 1
+  # The UI can outlive the watcher if the background process was killed or the
+  # recorded PID became stale.  A stale state file must not prevent the hot path
+  # from starting a fresh watcher; otherwise in-panel actions such as "刷新"
+  # keep writing requests that nobody consumes.
+  stop_recorded_injector 2>/dev/null || true
   inj_pid="$(launch_injector_daemon "$port")"
   /bin/kill -0 "$inj_pid" 2>/dev/null || return 1
   started_at="$(process_started_at "$inj_pid")"

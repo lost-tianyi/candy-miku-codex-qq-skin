@@ -29,7 +29,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$PORT" in ''|*[!0-9]*) fail "调试端口无效：$PORT（需要 1024–65535 的数字）" ;; esac
-[ -z "$SKIN_MODE" ] || [ "$SKIN_MODE" = "qq" ] || [ "$SKIN_MODE" = "custom" ] \
+[ -z "$SKIN_MODE" ] || [ "$SKIN_MODE" = "qq" ] || [ "$SKIN_MODE" = "miku" ] || [ "$SKIN_MODE" = "custom" ] \
   || fail "Invalid skin mode: $SKIN_MODE"
 [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] || fail "调试端口必须在 1024–65535 之间，当前为：$PORT"
 

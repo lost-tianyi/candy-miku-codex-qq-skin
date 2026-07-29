@@ -1,4 +1,4 @@
-((cssText, customCssText, artDataUrl, qqArtDataUrl, petDataUrl, retroFrameDataUrl, qqAvatarDataUrl, coughAudioDataUrl, deepThemeAssets, themeConfig, qqThemeConfig, libraryThemes) => {
+((cssText, customCssText, artDataUrl, qqArtDataUrl, qqStablePetDataUrl, petDataUrl, petFrameDataUrls, retroFrameDataUrl, qqStableAvatarDataUrl, qqAvatarDataUrl, coughAudioDataUrl, deepThemeAssets, themeConfig, qqThemeConfig, mikuThemeConfig, libraryThemes) => {
   const STATE_KEY = "__CODEX_QQ_SKIN_STATE__";
   const DISABLED_KEY = "__CODEX_QQ_SKIN_DISABLED__";
   const STYLE_ID = "codex-qq-skin-style";
@@ -27,24 +27,34 @@
     "data-dream-art-wide", "data-dream-art-safe", "data-dream-task-mode",
     "data-dream-art-safe-area", "data-dream-art-task-mode", "data-dream-art-aspect",
     "data-dream-art-ready", "data-dream-art-fit", "data-dream-three-pane", "data-dream-summary-state", "data-dream-left-sidebar",
-    "data-qq-usage-mode", "data-qq-usage-state",
+    "data-qq-usage-mode", "data-qq-usage-state", "data-qq-theme-id",
   ];
   const VERSION = __QQ_SKIN_VERSION_JSON__;
   const STYLE_REVISION = __QQ_SKIN_STYLE_REVISION_JSON__;
   const CUSTOM_THEME = themeConfig && typeof themeConfig === "object" ? themeConfig : {};
   const QQ_THEME = qqThemeConfig && typeof qqThemeConfig === "object" ? qqThemeConfig : {};
+  const MIKU_THEME = mikuThemeConfig && typeof mikuThemeConfig === "object" ? mikuThemeConfig : null;
+  const MIKU_AVAILABLE = Boolean(MIKU_THEME && MIKU_THEME.id === "preset-candy-miku");
   const DEEP_THEME_ASSETS = deepThemeAssets && typeof deepThemeAssets === "object" ? deepThemeAssets : {};
   const CUSTOM_THEME_KINDS = new Set(["custom-native", "deep-custom"]);
   let skinMode = "qq";
   try {
     const savedMode = window.localStorage?.getItem(MODE_STORAGE_KEY);
     const legacyEnabled = window.localStorage?.getItem(ENABLED_STORAGE_KEY);
-    if (["native", "qq", "custom"].includes(savedMode)) skinMode = savedMode;
+    const migrated = window.localStorage?.getItem("codex-qq-skin-miku-mode-migrated") === "true";
+    if (savedMode === "qq" && !migrated && MIKU_AVAILABLE) {
+      skinMode = "miku";
+      window.localStorage?.setItem("codex-qq-skin-miku-mode-migrated", "true");
+      window.localStorage?.setItem(MODE_STORAGE_KEY, "miku");
+    } else if (["native", "qq", "miku", "custom"].includes(savedMode)) skinMode = savedMode;
     else if (legacyEnabled === "false") skinMode = "native";
+    else if (MIKU_AVAILABLE) skinMode = "miku";
     else if (CUSTOM_THEME_KINDS.has(CUSTOM_THEME.kind)) skinMode = "custom";
   } catch {}
+  if (skinMode === "miku" && !MIKU_AVAILABLE) skinMode = "qq";
   if (skinMode === "custom" && !CUSTOM_THEME_KINDS.has(CUSTOM_THEME.kind)) skinMode = "qq";
-  let THEME = skinMode === "qq" ? QQ_THEME : CUSTOM_THEME;
+  const themeForMode = (mode) => mode === "qq" ? QQ_THEME : mode === "miku" ? (MIKU_THEME || QQ_THEME) : CUSTOM_THEME;
+  let THEME = themeForMode(skinMode);
   let ART = THEME.art && typeof THEME.art === "object" ? THEME.art : {};
   let LAYOUT = THEME.layout && typeof THEME.layout === "object" ? THEME.layout : {};
   let SOUND = THEME.sound && typeof THEME.sound === "object" ? THEME.sound : {};
@@ -102,6 +112,11 @@
   };
   let skinEnabled = skinMode !== "native";
   window[DISABLED_KEY] = !skinEnabled;
+  const isQQProductMode = () => skinMode === "qq" || skinMode === "miku";
+  const currentProductArtUrl = () => skinMode === "miku" ? artUrl : qqArtUrl;
+  const currentProductPetUrl = () => skinMode === "miku" ? petUrl : qqStablePetUrl;
+  const currentProductPetFrames = () => skinMode === "miku" ? petFrameUrls : [];
+  const currentProductAvatarUrl = () => skinMode === "miku" ? qqAvatarUrl : qqStableAvatarUrl;
 
   const previous = window[STATE_KEY];
   const dataUrlToObjectUrl = (dataUrl, fallbackMime) => {
@@ -114,8 +129,19 @@
   };
   const artUrl = dataUrlToObjectUrl(artDataUrl, "image/png");
   const qqArtUrl = dataUrlToObjectUrl(qqArtDataUrl, "image/png");
+  const qqStablePetUrl = dataUrlToObjectUrl(qqStablePetDataUrl, "image/png");
   const petUrl = dataUrlToObjectUrl(petDataUrl, "image/png");
+  const petFrameUrls = Array.isArray(petFrameDataUrls)
+    ? petFrameDataUrls
+      .filter((frame) => frame && typeof frame.url === "string")
+      .map((frame) => ({
+        state: ["idle", "wave", "thinking", "working"].includes(frame.state) ? frame.state : "idle",
+        url: dataUrlToObjectUrl(frame.url, "image/png"),
+      }))
+      .filter((frame) => Boolean(frame.url))
+    : [];
   const retroFrameUrl = dataUrlToObjectUrl(retroFrameDataUrl, "image/png");
+  const qqStableAvatarUrl = dataUrlToObjectUrl(qqStableAvatarDataUrl, "image/png");
   const qqAvatarUrl = dataUrlToObjectUrl(qqAvatarDataUrl, "image/png");
   const coughAudioUrl = dataUrlToObjectUrl(coughAudioDataUrl, "audio/mpeg");
   const deepThemeUrls = Object.fromEntries(Object.entries(DEEP_THEME_ASSETS)
@@ -127,6 +153,7 @@
   if (previous?.resizeObserver) previous.resizeObserver.disconnect();
   if (previous?.timer) clearInterval(previous.timer);
   if (previous?.startupTimer) clearInterval(previous.startupTimer);
+  if (previous?.companionFrameTimer) clearInterval(previous.companionFrameTimer);
   if (previous?.scheduler?.timeout) clearTimeout(previous.scheduler.timeout);
   if (previous?.scheduler?.frame != null && typeof cancelAnimationFrame === "function") {
     cancelAnimationFrame(previous.scheduler.frame);
@@ -420,11 +447,11 @@
     // The bundled QQ preset is a fixed product palette, not an uploaded-image
     // palette. Never let the previous custom image analysis tint its icons,
     // sidebars, or panels after switching back to QQ mode.
-    const explicit = new Set(skinMode === "qq"
+    const explicit = new Set(isQQProductMode()
       ? Object.keys(colors)
       : (Array.isArray(THEME.explicitColorKeys) ? THEME.explicitColorKeys : []));
     const adaptive = makeAdaptivePalette(artAnalysis?.accentRgb, shell);
-    const legacyLight = skinMode !== "qq" && !THEME.appearance && shell === "light";
+    const legacyLight = !isQQProductMode() && !THEME.appearance && shell === "light";
     const structural = new Set(["background", "panel", "panelAlt", "text", "muted"]);
     const pick = (name) => {
       const allowExplicit = explicit.has(name) && !(legacyLight && structural.has(name));
@@ -468,6 +495,8 @@
     setStyleProperty(root, "--qq-skin-tagline", cssString(THEME.tagline || "Make something wonderful."));
     setStyleProperty(root, "--qq-skin-project-prefix", cssString(THEME.projectPrefix || "选择项目 · "));
     setStyleProperty(root, "--qq-skin-project-label", cssString(THEME.projectLabel || "◉  选择项目"));
+    const themeId = String(THEME.id || "").trim();
+    setAttribute(root, "data-qq-theme-id", /^[A-Za-z0-9_-]{1,80}$/.test(themeId) ? themeId : "");
   };
 
   const applyArtMetadata = (root) => {
@@ -499,7 +528,7 @@
       focusX = typeof ART.focusX === "number" ? ART.focusX
         : profile?.focusX ?? (safeArea === "left" ? 0.72 : safeArea === "right" ? 0.28 : 0.5);
       focusY = typeof ART.focusY === "number" ? ART.focusY : profile?.focusY ?? 0.5;
-      artReady = Boolean(artAnalysis);
+      artReady = Boolean(profile);
     }
     const canonicalSafe = ["left", "right", "center", "none"].includes(safeArea)
       ? safeArea : "center";
@@ -674,6 +703,8 @@
 
   let chromeParts = null;
   let companionParts = null;
+  let companionFrameTimer = null;
+  let companionFrameTick = 0;
   let usageParts = null;
   let usageSnapshot = window.__CODEX_QQ_SKIN_USAGE_SNAPSHOT__ && typeof window.__CODEX_QQ_SKIN_USAGE_SNAPSHOT__ === "object"
     ? window.__CODEX_QQ_SKIN_USAGE_SNAPSHOT__
@@ -1187,11 +1218,40 @@
   };
 
   const syncCompanionStatus = (status) => {
+    // Always publish pet status so avatar-overlay can switch poses even if
+    // the companion card is not mounted yet.
+    try { window.localStorage?.setItem("codex-qq-skin-pet-status", status); } catch {}
+    try {
+      if (!window.__CODEX_QQ_SKIN_PET_CHANNEL__) {
+        window.__CODEX_QQ_SKIN_PET_CHANNEL__ = new BroadcastChannel("codex-qq-skin-pet");
+      }
+      window.__CODEX_QQ_SKIN_PET_CHANNEL__.postMessage({ status, at: Date.now() });
+    } catch {}
     const companion = companionParts?.companion;
     if (!companion) return;
     if (companion.dataset) companion.dataset.status = status;
     setTextContent(companionParts.statusText, statusLabels[status] || statusLabels.idle);
+    updateCompanionPetFrame(status);
   };
+
+  const companionFrameForStatus = (status) => {
+    const frames = currentProductPetFrames();
+    if (!frames.length) return currentProductPetUrl();
+    const byState = (state) => frames.find((frame) => frame.state === state)?.url;
+    if (status === "running") return byState("working") || byState("thinking") || frames[0].url;
+    if (status === "approval") return byState("thinking") || frames[0].url;
+    if (status === "completed") return byState("wave") || frames[0].url;
+    const idle = byState("idle") || frames[0].url;
+    const wave = byState("wave");
+    return wave && companionFrameTick % 4 === 3 ? wave : idle;
+  };
+
+  function updateCompanionPetFrame(status = soundMonitor.status) {
+    const image = companionParts?.image;
+    if (!image) return;
+    const nextUrl = companionFrameForStatus(status);
+    if (nextUrl && image.src !== nextUrl) image.src = nextUrl;
+  }
 
   const ensureCompanion = () => {
     let companion = document.getElementById(COMPANION_ID);
@@ -1240,7 +1300,18 @@
       bindAction(companionParts.petButton, openAvatarOverlay, "打开 Codex 宠物");
       bindAction(companionParts.terminalButton, toggleNativeTerminal, "显示或隐藏终端");
     }
-    if (companionParts.image && companionParts.image.src !== petUrl) companionParts.image.src = petUrl;
+    if (currentProductPetFrames().length) {
+      if (!companionFrameTimer) {
+        companionFrameTimer = setInterval(() => {
+          companionFrameTick += 1;
+          updateCompanionPetFrame();
+        }, 1800);
+      }
+    } else if (companionFrameTimer) {
+      clearInterval(companionFrameTimer);
+      companionFrameTimer = null;
+    }
+    updateCompanionPetFrame();
     soundMonitor.bindButton(companionParts.soundButton);
     soundMonitor.bindStatus(syncCompanionStatus);
     syncCompanionStatus(soundMonitor.status);
@@ -1360,7 +1431,7 @@
     parts.message?.classList?.toggle?.("is-visible", Boolean(message));
     const generated = snapshot.generatedAt ? new Date(snapshot.generatedAt) : null;
     const timeText = generated && !Number.isNaN(generated.getTime())
-      ? generated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      ? generated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
       : "--:--";
     setTextContent(parts.updated, `本机统计 · 更新于 ${timeText}`);
     if (parts.refreshButton) {
@@ -1375,6 +1446,22 @@
     window.__CODEX_QQ_SKIN_USAGE_SNAPSHOT__ = snapshot;
     renderUsageSnapshot();
     return true;
+  };
+
+  const requestUsageRefresh = () => {
+    const requestedAt = new Date().toISOString();
+    try { window.localStorage?.setItem(USAGE_REFRESH_KEY, String(Date.now())); } catch {}
+    window.__CODEX_QQ_SKIN_USAGE_REFRESH_REQUESTED_AT__ = requestedAt;
+    usageSnapshot = {
+      ...(usageSnapshot && typeof usageSnapshot === "object" ? usageSnapshot : {}),
+      schemaVersion: 1,
+      status: "loading",
+      stale: Boolean(usageSnapshot?.totals),
+      generatedAt: requestedAt,
+    };
+    window.__CODEX_QQ_SKIN_USAGE_SNAPSHOT__ = usageSnapshot;
+    renderUsageSnapshot();
+    return requestedAt;
   };
 
   const ensureUsagePanel = () => {
@@ -1433,11 +1520,7 @@
       usageParts.refreshButton?.addEventListener?.("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        try { window.localStorage?.setItem(USAGE_REFRESH_KEY, String(Date.now())); } catch {}
-        if (usageParts.refreshButton) {
-          usageParts.refreshButton.disabled = true;
-          usageParts.refreshButton.textContent = "刷新中";
-        }
+        requestUsageRefresh();
       });
       usageParts.netToggle?.addEventListener?.("click", (event) => {
         event.preventDefault();
@@ -1445,7 +1528,8 @@
         setUsageNetMode(!usageNetMode);
       });
     }
-    if (usageParts.image && usageParts.image.src !== qqAvatarUrl) usageParts.image.src = qqAvatarUrl;
+    const productAvatarUrl = currentProductAvatarUrl();
+    if (usageParts.image && usageParts.image.src !== productAvatarUrl) usageParts.image.src = productAvatarUrl;
     renderUsageSnapshot();
 
     let toggle = document.getElementById(USAGE_TOGGLE_ID);
@@ -1469,6 +1553,10 @@
 
   const ensureHomePet = (home) => {
     let pet = document.getElementById(HOME_PET_ID);
+    if (skinMode === "miku") {
+      pet?.remove();
+      return null;
+    }
     if (!home) {
       pet?.remove();
       return null;
@@ -1489,7 +1577,8 @@
       pet.setAttribute("aria-hidden", "true");
       hero.appendChild(pet);
     }
-    if (pet.src !== petUrl) pet.src = petUrl;
+    const productPetUrl = currentProductPetUrl();
+    if (pet.src !== productPetUrl) pet.src = productPetUrl;
     return pet;
   };
 
@@ -1588,8 +1677,9 @@
         controls: retroShell.querySelector(".dream-retro-native-controls"),
       };
     }
-    if (retroShellParts.penguin && retroShellParts.penguin.src !== qqAvatarUrl) {
-      retroShellParts.penguin.src = qqAvatarUrl;
+    const productAvatarUrl = currentProductAvatarUrl();
+    if (retroShellParts.penguin && retroShellParts.penguin.src !== productAvatarUrl) {
+      retroShellParts.penguin.src = productAvatarUrl;
     }
     setTextContent(retroShellParts.title, `Codex 2007 - ${findRetroTitle()}`);
     return retroShell;
@@ -1758,8 +1848,9 @@
       };
     }
     const name = String(profileButton.textContent || "Codex 用户").replace(/\s+/g, " ").trim();
-    if (retroProfileParts.image && retroProfileParts.image.src !== qqAvatarUrl) {
-      retroProfileParts.image.src = qqAvatarUrl;
+    const productAvatarUrl = currentProductAvatarUrl();
+    if (retroProfileParts.image && retroProfileParts.image.src !== productAvatarUrl) {
+      retroProfileParts.image.src = productAvatarUrl;
     }
     setTextContent(retroProfileParts.name, name);
     return profile;
@@ -1772,7 +1863,7 @@
     const modeRevision = `${STYLE_REVISION}:${skinMode}`;
     const nextText = skinMode === "custom"
       ? `${cssText}\n${customCssText}`
-      : skinMode === "qq"
+      : isQQProductMode()
         ? cssText
         : "";
     if (!style) {
@@ -1790,15 +1881,15 @@
 
   const applyRootState = (root) => {
     metrics.rootPasses += 1;
-    if (skinMode === "qq") forceNativeLightForQQ();
+    if (isQQProductMode()) forceNativeLightForQQ();
     else restoreNativeAppearance();
     ensureStyle(root);
     const shell = resolvedShell();
     setAttribute(root, SHELL_ATTR, shell);
     setAttribute(root, "data-dream-platform", /Win/i.test(window.navigator?.platform || window.navigator?.userAgent || "") ? "windows" : "other");
     // Hard-isolate art variables: never leave the other mode's wallpaper URL on :root.
-    if (skinMode === "qq") {
-      setStyleProperty(root, "--qq-skin-art", `url("${qqArtUrl}")`);
+    if (isQQProductMode()) {
+      setStyleProperty(root, "--qq-skin-art", `url("${currentProductArtUrl()}")`);
       setStyleProperty(root, "--dream-retro-frame", `url("${retroFrameUrl}")`);
       root.style.removeProperty("--dream-skin-art");
       setAttribute(root, "data-dream-deep-theme", "");
@@ -1858,10 +1949,10 @@
     }
     applyTheme(root, shell);
     applyArtMetadata(root);
-    root.classList.toggle("codex-qq-skin", skinMode === "qq");
+    root.classList.toggle("codex-qq-skin", isQQProductMode());
     root.classList.toggle("codex-dream-skin", skinMode === "custom");
     // Belt-and-suspenders: never allow both product skins on the same document.
-    if (skinMode === "qq") root.classList.remove("codex-dream-skin");
+    if (isQQProductMode()) root.classList.remove("codex-dream-skin");
     if (skinMode === "custom") root.classList.remove("codex-qq-skin");
     return shell;
   };
@@ -1905,7 +1996,7 @@
       if (candidate !== home) candidate.classList.remove("dream-skin-home");
     }
     if (home) {
-      home.classList.toggle("qq-skin-home", skinMode === "qq");
+      home.classList.toggle("qq-skin-home", isQQProductMode());
       home.classList.toggle("dream-skin-home", skinMode === "custom");
     }
     const homeUtilityBars = new Set(home
@@ -1918,12 +2009,12 @@
       if (!homeUtilityBars.has(candidate)) candidate.classList.remove("dream-skin-home-utility");
     }
     for (const candidate of homeUtilityBars) {
-      candidate.classList.toggle("qq-skin-home-utility", skinMode === "qq");
+      candidate.classList.toggle("qq-skin-home-utility", isQQProductMode());
       candidate.classList.toggle("dream-skin-home-utility", skinMode === "custom");
     }
 
     if (!shellMain || !document.body) return;
-    shellMain.classList.toggle("qq-skin-home-shell", Boolean(home) && skinMode === "qq");
+    shellMain.classList.toggle("qq-skin-home-shell", Boolean(home) && isQQProductMode());
     shellMain.classList.toggle("dream-skin-home-shell", Boolean(home) && skinMode === "custom");
     if (skinMode === "custom") {
       removeQQDecorations();
@@ -2144,24 +2235,29 @@
   const syncToggleButton = (control) => {
     for (const button of control.querySelectorAll("button[data-skin-mode]")) {
       const selected = button.dataset.skinMode === skinMode;
-      const unavailable = button.dataset.skinMode === "custom" && !CUSTOM_THEME_KINDS.has(CUSTOM_THEME.kind);
+      const unavailable = (button.dataset.skinMode === "custom" && !CUSTOM_THEME_KINDS.has(CUSTOM_THEME.kind)) ||
+        (button.dataset.skinMode === "miku" && !MIKU_AVAILABLE);
       button.disabled = unavailable;
       button.setAttribute("aria-pressed", selected ? "true" : "false");
       button.style.opacity = unavailable ? ".45" : "1";
-      button.style.color = selected ? "#fff" : "#3b3f45";
+      button.style.color = selected ? "#fff" : "#147b79";
       button.style.background = selected
-        ? "linear-gradient(180deg,#4ba9f0 0%,#166fc8 100%)"
+        ? (button.dataset.skinMode === "miku"
+          ? "linear-gradient(135deg,#22d8c8 0%,#ff79b8 100%)"
+          : "linear-gradient(180deg,#42cfc8 0%,#158dca 100%)")
         : "transparent";
-      button.style.boxShadow = selected ? "inset 0 1px rgba(255,255,255,.42),0 1px 2px rgba(0,54,112,.22)" : "none";
+      button.style.boxShadow = selected
+        ? "inset 0 1px rgba(255,255,255,.56),0 2px 8px rgba(34,216,200,.22)"
+        : "none";
     }
     const libraryButton = control.querySelector("button[data-skin-library]");
     if (libraryButton) {
       const unavailable = !CUSTOM_THEME_KINDS.has(CUSTOM_THEME.kind) && LIBRARY_THEMES.length === 0;
       libraryButton.disabled = unavailable;
       libraryButton.style.opacity = unavailable ? ".45" : "1";
-      libraryButton.style.color = skinMode === "custom" ? "#fff" : "#3b3f45";
+      libraryButton.style.color = skinMode === "custom" ? "#fff" : "#147b79";
       libraryButton.style.background = skinMode === "custom"
-        ? "linear-gradient(180deg,#4ba9f0 0%,#166fc8 100%)"
+        ? "linear-gradient(135deg,#22d8c8 0%,#ff79b8 100%)"
         : "transparent";
     }
   };
@@ -2241,12 +2337,13 @@
   };
 
   const selectSkinMode = (mode) => {
-    if (!["native", "qq", "custom"].includes(mode)) return;
+    if (!["native", "qq", "miku", "custom"].includes(mode)) return;
+    if (mode === "miku" && !MIKU_AVAILABLE) return;
     if (mode === "custom" && !CUSTOM_THEME_KINDS.has(CUSTOM_THEME.kind)) return;
     skinMode = mode;
-    if (skinMode === "qq") forceNativeLightForQQ();
+    if (isQQProductMode()) forceNativeLightForQQ();
     else restoreNativeAppearance();
-    THEME = skinMode === "qq" ? QQ_THEME : CUSTOM_THEME;
+    THEME = themeForMode(skinMode);
     ART = THEME.art && typeof THEME.art === "object" ? THEME.art : {};
     LAYOUT = THEME.layout && typeof THEME.layout === "object" ? THEME.layout : {};
     SOUND = THEME.sound && typeof THEME.sound === "object" ? THEME.sound : {};
@@ -2262,7 +2359,7 @@
     const state = window[STATE_KEY];
     if (state?.installToken === installToken) {
       state.skinMode = skinMode;
-      state.themeId = THEME.id || (skinMode === "qq" ? "qq-stable" : "custom");
+      state.themeId = THEME.id || (skinMode === "qq" ? "qq-stable" : skinMode === "miku" ? "preset-candy-miku" : "custom");
     }
     removeSkinVisuals();
     if (skinMode !== "native") ensure({ root: true, route: true, layout: true });
@@ -2290,20 +2387,42 @@
       control.setAttribute("role", "group");
       control.setAttribute("aria-label", "切换皮肤");
       control.style.cssText = [
-        "position:fixed", "z-index:2147483000", "top:7px", "right:210px", "height:28px",
-        "display:flex", "align-items:center", "gap:2px", "padding:2px",
-        "border:1px solid rgba(82,88,98,.18)", "border-radius:10px",
-        "background:rgba(248,248,249,.91)", "box-shadow:0 1px 2px rgba(0,0,0,.08),0 5px 14px rgba(0,0,0,.08)",
-        "backdrop-filter:blur(14px) saturate(110%)", "-webkit-app-region:no-drag",
+        "position:fixed", "z-index:2147483000", "top:7px", "right:210px", "height:30px",
+        "display:flex", "align-items:center", "gap:3px", "padding:3px",
+        "border:1px solid rgba(34,216,200,.42)", "border-radius:13px",
+        "background:linear-gradient(135deg,rgba(255,255,255,.88),rgba(231,255,252,.78),rgba(255,229,246,.72))",
+        "box-shadow:0 1px 2px rgba(0,0,0,.08),0 5px 16px rgba(255,121,184,.14),inset 0 0 0 1px rgba(255,255,255,.64)",
+        "backdrop-filter:blur(14px) saturate(118%)", "-webkit-app-region:no-drag",
       ].join(";");
-      for (const [mode, label] of [["native", "原生"], ["qq", "QQ"], ["custom", "自定义"]]) {
+      const modes = [
+        ["native", "原生", "⌘"],
+        ["qq", "QQ", "🐧"],
+        ["miku", "Miku Candy", ""],
+        ["custom", "自定义", "✦"],
+      ];
+      for (const [mode, label, icon] of modes) {
         const button = document.createElement("button");
         button.type = "button";
         button.dataset.skinMode = mode;
-        button.textContent = label;
+        button.title = label;
+        button.setAttribute("aria-label", label);
+        if (mode === "miku") {
+          const img = document.createElement("img");
+          img.alt = "";
+          img.draggable = false;
+          img.src = qqAvatarUrl;
+          img.style.cssText = [
+            "width:18px", "height:18px", "border-radius:50%", "object-fit:cover",
+            "display:block", "box-shadow:0 0 0 1px rgba(255,255,255,.72)",
+          ].join(";");
+          button.appendChild(img);
+        } else {
+          button.textContent = icon;
+        }
         button.style.cssText = [
-          "height:22px", "padding:0 9px", "border:0", "border-radius:7px", "white-space:nowrap",
-          "font:650 11px/22px -apple-system,BlinkMacSystemFont,\"PingFang SC\",sans-serif",
+          "width:24px", "height:24px", "display:grid", "place-items:center", "padding:0", "border:0",
+          "border-radius:9px", "white-space:nowrap",
+          "font:700 13px/24px -apple-system,BlinkMacSystemFont,\"PingFang SC\",sans-serif",
           "cursor:pointer", "user-select:none", "transition:background .16s ease,color .16s ease",
         ].join(";");
         const activateMode = (event) => {
@@ -2325,9 +2444,10 @@
         libraryButton.dataset.skinLibrary = "recent";
         libraryButton.setAttribute("aria-label", "最近自定义皮肤");
         libraryButton.setAttribute("aria-haspopup", "menu");
+        libraryButton.title = "最近自定义皮肤";
         libraryButton.textContent = "▾";
         libraryButton.style.cssText = [
-          "height:22px", "width:22px", "padding:0", "border:0", "border-radius:7px",
+          "height:24px", "width:20px", "padding:0", "border:0", "border-radius:9px",
           "font:700 12px/22px -apple-system,BlinkMacSystemFont,\"PingFang SC\",sans-serif",
           "cursor:pointer", "user-select:none", "transition:background .16s ease,color .16s ease",
         ].join(";");
@@ -2374,8 +2494,13 @@
     }
     if (state?.artUrl) URL.revokeObjectURL(state.artUrl);
     if (state?.qqArtUrl) URL.revokeObjectURL(state.qqArtUrl);
+    if (state?.qqStablePetUrl) URL.revokeObjectURL(state.qqStablePetUrl);
     if (state?.petUrl) URL.revokeObjectURL(state.petUrl);
+    for (const frame of state?.petFrameUrls || []) {
+      if (frame?.url) URL.revokeObjectURL(frame.url);
+    }
     if (state?.retroFrameUrl) URL.revokeObjectURL(state.retroFrameUrl);
+    if (state?.qqStableAvatarUrl) URL.revokeObjectURL(state.qqStableAvatarUrl);
     if (state?.qqAvatarUrl) URL.revokeObjectURL(state.qqAvatarUrl);
     if (state?.coughAudioUrl) URL.revokeObjectURL(state.coughAudioUrl);
     for (const url of Object.values(state?.deepThemeUrls || {})) URL.revokeObjectURL(url);
@@ -2438,6 +2563,7 @@
     cleanup,
     ensureToggleButton,
     setUsageSnapshot,
+    requestUsageRefresh,
     observer,
     rootObserver,
     resizeObserver,
@@ -2447,12 +2573,16 @@
     resizeHandler,
     routeInteractionHandler,
     soundMonitor,
+    companionFrameTimer,
     mediaQuery,
     mediaHandler,
     artUrl,
     qqArtUrl,
+    qqStablePetUrl,
     petUrl,
+    petFrameUrls,
     retroFrameUrl,
+    qqStableAvatarUrl,
     qqAvatarUrl,
     coughAudioUrl,
     deepThemeUrls,
@@ -2461,11 +2591,12 @@
     artMetadata: CUSTOM_ART_METADATA,
     metrics,
     version: VERSION,
-    themeId: THEME.id || "custom",
+    themeId: THEME.id || (skinMode === "qq" ? "qq-stable" : skinMode === "miku" ? "preset-candy-miku" : "custom"),
     skinMode,
     customThemeKind: CUSTOM_THEME.kind || null,
     customThemeId: CUSTOM_THEME.id || null,
     qqThemeId: QQ_THEME.id || null,
+    mikuThemeId: MIKU_THEME?.id || null,
     detectShellMode,
     selectSkinMode,
   };
@@ -2476,8 +2607,14 @@
   if (previous?.artUrl && previous.artUrl !== artUrl) URL.revokeObjectURL(previous.artUrl);
   if (previous?.qqArtUrl && previous.qqArtUrl !== qqArtUrl) URL.revokeObjectURL(previous.qqArtUrl);
   if (previous?.petUrl && previous.petUrl !== petUrl) URL.revokeObjectURL(previous.petUrl);
+  if (previous?.qqStablePetUrl && previous.qqStablePetUrl !== qqStablePetUrl) {
+    URL.revokeObjectURL(previous.qqStablePetUrl);
+  }
   if (previous?.retroFrameUrl && previous.retroFrameUrl !== retroFrameUrl) {
     URL.revokeObjectURL(previous.retroFrameUrl);
+  }
+  if (previous?.qqStableAvatarUrl && previous.qqStableAvatarUrl !== qqStableAvatarUrl) {
+    URL.revokeObjectURL(previous.qqStableAvatarUrl);
   }
   if (previous?.qqAvatarUrl && previous.qqAvatarUrl !== qqAvatarUrl) {
     URL.revokeObjectURL(previous.qqAvatarUrl);
@@ -2559,7 +2696,7 @@
   return {
     installed: true,
     version: VERSION,
-    themeId: THEME.id || "custom",
+    themeId: THEME.id || (skinMode === "qq" ? "qq-stable" : skinMode === "miku" ? "preset-candy-miku" : "custom"),
     shell: resolvedShell(),
     analysis: artAnalysis,
   };
@@ -2568,12 +2705,16 @@
   __CUSTOM_SKIN_CSS_JSON__,
   __QQ_SKIN_ART_JSON__,
   __QQ_STABLE_ART_JSON__,
+  __QQ_STABLE_PET_JSON__,
   __QQ_SKIN_PET_JSON__,
+  __QQ_SKIN_PET_FRAMES_JSON__,
   __QQ_SKIN_RETRO_FRAME_JSON__,
+  __QQ_STABLE_AVATAR_JSON__,
   __QQ_SKIN_QQ_AVATAR_JSON__,
   __QQ_SKIN_COUGH_AUDIO_JSON__,
   __QQ_SKIN_DEEP_ASSETS_JSON__,
   __QQ_SKIN_THEME_JSON__,
   __QQ_STABLE_THEME_JSON__,
+  __QQ_MIKU_THEME_JSON__,
   __QQ_SKIN_LIBRARY_JSON__
 )

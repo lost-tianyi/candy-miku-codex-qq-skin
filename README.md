@@ -2,14 +2,14 @@
 
 # Codex QQ Skin
 
-一套面向 Codex/ChatGPT 桌面端的内置复古 QQ 风格外观的皮肤生成器。  
-1、支持 Mac & Windows 系统：提供 macOS App 与原生 C# Windows 安装器。  
+一套面向 Codex/ChatGPT 桌面端的内置复古 QQ 风格外观的皮肤生成器。
+1、支持 Mac & Windows 系统：提供 macOS App 与原生 C# Windows 安装器。
 2、支持自定义皮肤：既可选择任意图片生成背景皮肤，也可用 Codex 深度皮肤助手从一句主题关键词生成完整分层皮肤。
-3、皮肤库管理器  
-4、Codex token 统计  
-5、QQ 等级系统  
-6、内置自动检测版本升级  
-7、深度皮肤定制助手 skill  
+3、皮肤库管理器
+4、Codex token 统计
+5、QQ 等级系统
+6、内置自动检测版本升级
+7、深度皮肤定制助手 skill
 
 > 非 OpenAI、腾讯或 QQ 官方产品。本项目不会修改官方 `.app`、`app.asar`、代码签名、API Key 或 Base URL。
 
@@ -246,12 +246,17 @@ npm run build:app
 
 ```text
 assets/      外框、企鹅、CSS 与 renderer 注入代码
-presets/     经典 Codex QQ 三栏预设
+presets/     内置主题（经典 Codex、Candy Miku 等）
 scripts/     安装、启动、验证、换图、暂停和恢复脚本
 skills/      可由安装器一键安装的 Codex 深度皮肤助手
 menubar/     可选 SwiftBar 菜单插件
 tests/       macOS 自动化回归测试
 ```
+
+内置主题说明：
+
+- [Candy Miku](./presets/preset-candy-miku/README.md) — 薄荷糖果色 Miku，含 Live2D-lite 浮动宠物与四态状态切换
+- `preset-classic-codex` / `preset-bumblebee` — 经典 / 大黄蜂风格预设
 
 仓库保留 macOS 稳定版和 Windows x64 预览版共享的皮肤代码；两套系统分别使用 Shell/Swift 和 PowerShell 运行层。
 
@@ -277,6 +282,7 @@ Codex QQ Skin 通过仅监听 `127.0.0.1` 的 Chromium DevTools Protocol，把 C
 
 - Codex、ChatGPT 与 OpenAI 名称及相关权利属于其权利人。
 - QQ 与腾讯名称及相关权利属于其权利人。
+- Hatsune Miku / 初音未来等相关形象权利归 Crypton Future Media 等权利人所有；Candy Miku 主题为非官方外观示例。
 - 本仓库企鹅为 AI 生成的非官方复古风格素材，不代表腾讯或 QQ 官方图标授权。
 - `codex-pet.png` 与复古外框仅作为本项目的界面装饰素材。
 - 商业分发前请自行完成商标、素材和当地法律审查。

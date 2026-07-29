@@ -1,0 +1,65 @@
+{
+  "width": 420,
+  "height": 520,
+  "defaultState": "idle",
+  "layers": [
+    {
+      "id": "base",
+      "image": "miku-l2d-base.png",
+      "z": 10,
+      "role": "base",
+      "pivotX": 0.5,
+      "pivotY": 0.6255
+    }
+  ],
+  "states": {
+    "idle": {
+      "layers": [
+        {
+          "id": "base",
+          "image": "miku-l2d-base.png",
+          "z": 10,
+          "role": "base",
+          "pivotX": 0.5,
+          "pivotY": 0.6255
+        }
+      ]
+    },
+    "wave": {
+      "layers": [
+        {
+          "id": "base",
+          "image": "miku-l2d-wave.png",
+          "z": 10,
+          "role": "base",
+          "pivotX": 0.5,
+          "pivotY": 0.6287307692307692
+        }
+      ]
+    },
+    "thinking": {
+      "layers": [
+        {
+          "id": "base",
+          "image": "miku-l2d-thinking.png",
+          "z": 10,
+          "role": "base",
+          "pivotX": 0.5,
+          "pivotY": 0.6255
+        }
+      ]
+    },
+    "working": {
+      "layers": [
+        {
+          "id": "base",
+          "image": "miku-l2d-working.png",
+          "z": 10,
+          "role": "base",
+          "pivotX": 0.5,
+          "pivotY": 0.6255
+        }
+      ]
+    }
+  }
+}

@@ -352,9 +352,9 @@ assert.match(customCss, /html\.codex-dream-skin body::after[\s\S]{0,300}rgb\(var
 assert.match(customCss, /html\.codex-dream-skin body::before[\s\S]{0,300}background-image:\s*var\(--dream-skin-art\)/,
   "Blurred custom wallpaper must still use the uploaded art once behind the UI.");
 assert.match(template, /const TOGGLE_ID = "codex-qq-skin-toggle"[\s\S]{0,400}codex-qq-skin-mode/,
-  "The renderer must ship a persistent three-mode UI selector.");
-assert.match(template, /\["native", "原生"\][\s\S]{0,80}\["qq", "QQ"\][\s\S]{0,80}\["custom", "自定义"\]/,
-  "The title-bar selector must expose native, stable QQ, and custom skins.");
+  "The renderer must ship a persistent skin selector.");
+assert.match(template, /\["native", "原生", "⌘"\][\s\S]{0,120}\["qq", "QQ", "🐧"\][\s\S]{0,120}\["miku", "Miku Candy", ""\][\s\S]{0,120}\["custom", "自定义", "✦"\]/,
+  "The title-bar selector must expose native, stable QQ, Miku Candy, and custom skins.");
 assert.match(template, /LIBRARY_SWITCH_KEY = "codex-qq-skin-library-switch"/,
   "Codex must request library switches through a dedicated localStorage channel.");
 assert.match(template, /dataset\.skinLibrary = "recent"/,
@@ -366,15 +366,15 @@ assert.match(template, /addEventListener\?\.\("pointerup", activateMode\)/,
 assert.match(template, /完整管理请打开 App/,
   "The lightweight picker must defer full library management to the macOS App.");
 assert.match(template, /"right:210px"[\s\S]{0,500}"display:flex"/,
-  "The three-mode selector must sit left of the native folder control and use a segmented layout.");
+  "The icon skin selector must sit left of the native folder control and use a segmented layout.");
 assert.match(template, /const selectSkinMode[\s\S]{0,1800}removeSkinVisuals\(\)[\s\S]{0,200}skinMode !== "native"/,
   "Mode selection must fully restore native visuals or apply exactly one injected skin.");
 assert.match(template, /state\.skinMode = skinMode[\s\S]{0,160}state\.themeId = THEME\.id/,
   "Mode selection must keep the public injector state synchronized with the selected skin.");
-assert.match(template, /const explicit = new Set\(skinMode === "qq"[\s\S]{0,180}Object\.keys\(colors\)/,
-  "QQ mode must restore its fixed palette instead of retaining custom-image colors.");
-assert.match(template, /skinMode === "qq"[\s\S]{0,220}removeProperty\("--dream-skin-art"\)/,
-  "QQ mode must clear the custom wallpaper CSS variable.");
+assert.match(template, /const explicit = new Set\(isQQProductMode\(\)[\s\S]{0,180}Object\.keys\(colors\)/,
+  "Product skin modes must restore their fixed palettes instead of retaining custom-image colors.");
+assert.match(template, /if \(isQQProductMode\(\)\)[\s\S]{0,260}removeProperty\("--dream-skin-art"\)/,
+  "Product skin modes must clear the custom wallpaper CSS variable.");
 assert.match(template, /skinMode !== "custom"\) return/,
   "Late custom-image analysis must not reapply while QQ mode is active.");
 assert.match(template, /modeRevision = `\$\{STYLE_REVISION\}:\$\{skinMode\}`/,
@@ -502,7 +502,10 @@ function createFixture(theme, {
   let nextTimer = 1;
   let nextBlob = 1;
   const storage = new Map();
-  if (preferredMode) storage.set("codex-qq-skin-mode", preferredMode);
+  if (preferredMode) {
+    storage.set("codex-qq-skin-mode", preferredMode);
+    if (preferredMode === "qq") storage.set("codex-qq-skin-miku-mode-migrated", "true");
+  }
   const rootStyle = createStyleDeclaration();
   const root = {
     className: nativeShell === "dark" ? "electron-dark" : "electron-light",
@@ -787,8 +790,11 @@ function createFixture(theme, {
     .replace("__CUSTOM_SKIN_CSS_JSON__", JSON.stringify(".custom-fixture { color: pink; }"))
     .replace("__QQ_SKIN_ART_JSON__", JSON.stringify("data:image/png;base64,AA=="))
     .replace("__QQ_STABLE_ART_JSON__", JSON.stringify("data:image/png;base64,AA=="))
+    .replace("__QQ_STABLE_PET_JSON__", JSON.stringify("data:image/png;base64,AA=="))
     .replace("__QQ_SKIN_PET_JSON__", JSON.stringify("data:image/png;base64,AA=="))
+    .replace("__QQ_SKIN_PET_FRAMES_JSON__", JSON.stringify([]))
     .replace("__QQ_SKIN_RETRO_FRAME_JSON__", JSON.stringify("data:image/png;base64,AA=="))
+    .replace("__QQ_STABLE_AVATAR_JSON__", JSON.stringify("data:image/png;base64,AA=="))
     .replace("__QQ_SKIN_QQ_AVATAR_JSON__", JSON.stringify("data:image/png;base64,AA=="))
     .replace("__QQ_SKIN_COUGH_AUDIO_JSON__", JSON.stringify("data:audio/mpeg;base64,SUQz"))
     .replace("__QQ_SKIN_DEEP_ASSETS_JSON__", JSON.stringify({
@@ -813,6 +819,24 @@ function createFixture(theme, {
         accent: "#2f7dcc", accentAlt: "#5ba7ec", secondary: "#76b8ee",
         highlight: "#1f64ad", text: "#17395f", muted: "#587795",
         line: "rgba(54, 112, 174, .30)",
+      },
+    }))
+    .replace("__QQ_MIKU_THEME_JSON__", JSON.stringify({
+      schemaVersion: 1,
+      id: "preset-candy-miku",
+      kind: "qq-stable",
+      name: "Candy Miku",
+      appearance: "light",
+      art: { safeArea: "right", taskMode: "off" },
+      layout: nextTheme.layout || {
+        mode: "classic-three-pane", rightPanel: "open", minWidth: 1180, rightWidth: 300,
+      },
+      sound: nextTheme.sound || { enabled: true, volume: 0.48 },
+      colors: nextTheme.colors || {
+        background: "#f7fffd", panel: "#ffffff", panelAlt: "#eafffb",
+        accent: "#21d6c9", accentAlt: "#ff8ccc", secondary: "#8be8df",
+        highlight: "#0aaea4", text: "#17395f", muted: "#587795",
+        line: "rgba(33, 214, 201, .30)",
       },
     }))
     .replace("__QQ_SKIN_LIBRARY_JSON__", JSON.stringify([
@@ -858,6 +882,8 @@ const defaults = createFixture({
   id: "default-contract",
   appearance: "auto",
   art: { safeArea: "auto", taskMode: "auto" },
+}, {
+  preferredMode: "qq",
 });
 const defaultResult = vm.runInNewContext(defaults.payload, defaults.context);
 assert.equal(defaultResult.installed, true);
@@ -873,7 +899,7 @@ assert.ok(defaults.nodes.has("codex-qq-skin-right-tray"));
 assert.ok(defaults.nodes.has("codex-qq-skin-retro-shell"));
 assert.equal(typeof defaults.window.__CODEX_QQ_SKIN_STATE__.soundMonitor.preview, "function");
 assert.equal(defaults.window.__CODEX_QQ_SKIN_STATE__.soundMonitor.enabled, true);
-assert.equal(defaults.rootStyle.values.get("--dream-retro-frame"), 'url("blob:fixture-4")');
+assert.equal(defaults.rootStyle.values.get("--dream-retro-frame"), 'url("blob:fixture-5")');
 assert.equal(defaults.rootStyle.values.get("--dream-art-position"), "50.00% 50.00%");
 assert.equal(defaults.rootStyle.values.get("--qq-skin-art"), 'url("blob:fixture-2")');
 assert.equal(defaults.rootStyle.values.has("--dream-skin-art"), false);
@@ -1067,6 +1093,8 @@ const synchronousWide = createFixture({
     aspect: "wide",
     taskMode: "ambient",
   },
+}, {
+  preferredMode: "qq",
 });
 vm.runInNewContext(synchronousWide.payload, synchronousWide.context);
 assert.equal(synchronousWide.attributes.get("data-dream-art-wide"), "false",
@@ -1150,11 +1178,11 @@ assert.equal(synchronousWide.nodes.get("codex-qq-skin-style"), stableStyle);
 assert.equal(stableStyle.textContent, ".fixture { color: red; }",
   "QQ mode must not keep custom-skin.css injected.");
 assert.equal(stableStyle.dataset.dreamSkinVersion, "test");
-assert.equal(synchronousWide.rootStyle.values.get("--qq-skin-art"), 'url("blob:fixture-11")');
+assert.equal(synchronousWide.rootStyle.values.get("--qq-skin-art"), 'url("blob:fixture-13")');
 assert.equal(synchronousWide.rootStyle.values.has("--dream-skin-art"), false);
 assert.deepEqual(synchronousWide.revokedUrls, [
-  "blob:fixture-1", "blob:fixture-2", "blob:fixture-3", "blob:fixture-4", "blob:fixture-5", "blob:fixture-6",
-  "blob:fixture-7", "blob:fixture-8", "blob:fixture-9",
+  "blob:fixture-1", "blob:fixture-2", "blob:fixture-4", "blob:fixture-3", "blob:fixture-5", "blob:fixture-6",
+  "blob:fixture-7", "blob:fixture-8", "blob:fixture-9", "blob:fixture-10", "blob:fixture-11",
 ]);
 assert.equal(previousWideState.cleanup(), false, "An old async cleanup must not remove the new theme.");
 
@@ -1275,7 +1303,7 @@ assert.equal(explicit.nodes.has("codex-qq-skin-right-tray"), false);
 assert.equal(explicit.nodes.has("codex-qq-skin-retro-shell"), false);
 assert.deepEqual(explicit.revokedUrls, [
   "blob:fixture-1", "blob:fixture-2", "blob:fixture-3", "blob:fixture-4", "blob:fixture-5", "blob:fixture-6",
-  "blob:fixture-7", "blob:fixture-8", "blob:fixture-9",
+  "blob:fixture-7", "blob:fixture-8", "blob:fixture-9", "blob:fixture-10", "blob:fixture-11",
 ]);
 await Promise.resolve();
 await Promise.resolve();

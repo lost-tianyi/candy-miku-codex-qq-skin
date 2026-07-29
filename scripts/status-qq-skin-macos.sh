@@ -71,6 +71,25 @@ injector_identity_matches() {
   [ -n "$actual_start" ] && [ "$actual_start" = "$expected_start" ]
 }
 
+find_live_injector_by_command() {
+  local expected_injector="$1"
+  local expected_port="$2"
+  local injector_lower
+
+  [ -n "$expected_injector" ] || return 1
+  case "$expected_port" in ''|*[!0-9]*) return 1 ;; esac
+  injector_lower="$(printf '%s' "$expected_injector" | /usr/bin/tr '[:upper:]' '[:lower:]')"
+  /bin/ps -axo pid=,command= 2>/dev/null | /usr/bin/awk -v inj="$injector_lower" -v port="$expected_port" '
+    {
+      line = tolower($0)
+      if (index(line, inj) && index(line, "injector.mjs") && index(line, "--watch") && index(line, "--port " port " --theme-dir ")) {
+        print $1
+        exit
+      }
+    }
+  '
+}
+
 # Codex process: cheap name match only.  26.707 renamed Codex.app to
 # ChatGPT.app, while older installs still expose the former process name.
 if /usr/bin/pgrep -x ChatGPT >/dev/null 2>&1 || /usr/bin/pgrep -x Codex >/dev/null 2>&1; then
@@ -86,6 +105,9 @@ if [ -f "$STATE_PATH" ]; then
   saved_node="$(read_json_field "$STATE_PATH" nodePath)"
   saved_injector="$(read_json_field "$STATE_PATH" injectorPath)"
   if injector_identity_matches "${pid:-}" "$saved_start" "$saved_node" "$saved_injector" "$PORT"; then
+    INJECTOR_ALIVE="true"
+    SESSION="active"
+  elif live_pid="$(find_live_injector_by_command "$saved_injector" "$PORT")" && [ -n "$live_pid" ]; then
     INJECTOR_ALIVE="true"
     SESSION="active"
   elif [ "${SESSION:-}" = "paused" ] && [ "${pid:-}" = "0" ]; then

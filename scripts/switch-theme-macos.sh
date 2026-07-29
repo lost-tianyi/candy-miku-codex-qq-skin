@@ -69,6 +69,9 @@ KEEP_FILES="|theme.json|$THEME_IMAGE|"
 SCHEMA_VERSION="$("$NODE" -e 'const t=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(String(t.schemaVersion||1))' "$THEME_DIR/theme.json")"
 if [ "$SCHEMA_VERSION" = "2" ]; then
   KEEP_FILES="|theme.json|$("$NODE" -e 'const t=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(Object.values(t.assets||{}).join("|"))' "$THEME_DIR/theme.json")|"
+else
+  EXTRA_THEME_FILES="$("$NODE" -e 'const path=require("path");const t=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const files=["pet","avatar","overlayPet"].map(k=>typeof t[k]==="string"?path.basename(t[k]):"");for(const frame of [...(Array.isArray(t.petFrames)?t.petFrames:[]),...(Array.isArray(t.overlayPetFrames)?t.overlayPetFrames:[])]){ if(!frame) continue; if(typeof frame.image==="string") files.push(path.basename(frame.image)); if(Array.isArray(frame.images)) for(const image of frame.images) if(typeof image==="string") files.push(path.basename(image)); } const pushLayers=(layers)=>{ for(const layer of (Array.isArray(layers)?layers:[])){ if(layer&&typeof layer.image==="string") files.push(path.basename(layer.image)); } }; pushLayers(t.overlayLive2D&&t.overlayLive2D.layers); for(const pack of Object.values((t.overlayLive2D&&t.overlayLive2D.states)||{})) pushLayers(pack&&pack.layers); process.stdout.write(files.filter(Boolean).join("|"))' "$THEME_DIR/theme.json")"
+  [ -n "$EXTRA_THEME_FILES" ] && KEEP_FILES="${KEEP_FILES}${EXTRA_THEME_FILES}|"
 fi
 for entry in "$THEME_DIR"/*; do
   [ -f "$entry" ] || continue
@@ -81,8 +84,13 @@ trap - EXIT
 THEME_NAME="$("$NODE" -e 'try{const t=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(t.name||"")}catch{}' "$THEME_DIR/theme.json" 2>/dev/null || true)"
 [ -n "$THEME_NAME" ] || THEME_NAME="$THEME_ID"
 THEME_KIND="$("$NODE" -e 'try{const t=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(t.kind||"")}catch{}' "$THEME_DIR/theme.json" 2>/dev/null || true)"
+THEME_JSON_ID="$("$NODE" -e 'try{const t=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(t.id||"")}catch{}' "$THEME_DIR/theme.json" 2>/dev/null || true)"
 SKIN_MODE="custom"
 [ "$THEME_KIND" = "qq-stable" ] && SKIN_MODE="qq"
+# Candy Miku is a product skin: companion petFrames only activate in miku mode.
+if [ "$THEME_ID" = "preset-candy-miku" ] || [ "$THEME_JSON_ID" = "preset-candy-miku" ]; then
+  SKIN_MODE="miku"
+fi
 
 if [ "$APPLY_NOW" != "true" ]; then
   progress "Ready: ${THEME_NAME} (not applied)"

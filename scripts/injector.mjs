@@ -20,13 +20,13 @@ const USAGE_REFRESH_INTERVAL_MS = 60_000;
 let staticPayloadAssets = null;
 
 async function persistActiveMode(themeDir, mode, themeId = null) {
-  if (!themeDir || !["native", "qq", "custom"].includes(mode)) return;
+  if (!themeDir || !["native", "qq", "miku", "custom"].includes(mode)) return;
   const file = path.join(resolveStateRoot(themeDir), "active-skin.json");
   const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
   const payload = `${JSON.stringify({
     schemaVersion: 1,
     mode,
-    themeId: mode === "custom" && typeof themeId === "string" ? themeId : null,
+    themeId: (mode === "custom" || mode === "miku") && typeof themeId === "string" ? themeId : null,
     updatedAt: new Date().toISOString(),
   }, null, 2)}\n`;
   try {
@@ -71,7 +71,7 @@ function parseArgs(argv) {
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 250 || options.timeoutMs > 120000) {
     throw new Error(`Invalid timeout: ${options.timeoutMs}`);
   }
-  if (options.skinMode !== null && !["native", "qq", "custom"].includes(options.skinMode)) {
+  if (options.skinMode !== null && !["native", "qq", "miku", "custom"].includes(options.skinMode)) {
     throw new Error(`Invalid skin mode: ${options.skinMode}`);
   }
   return options;
@@ -236,16 +236,21 @@ async function listAppTargets(port) {
 
 async function probeSession(session) {
   return session.evaluate(`(() => {
+    const href = String(location.href || "");
     const markers = {
       shell: Boolean(document.querySelector('main.main-surface')),
       sidebar: Boolean(document.querySelector('aside.app-shell-left-panel')),
       composer: Boolean(document.querySelector('.composer-surface-chrome')),
       main: Boolean(document.querySelector('[role="main"]')),
+      overlayFrame: Boolean(document.querySelector('[data-avatar-overlay-content-frame]')),
     };
+    // Match by route early; content frame may appear after navigation.
+    const avatarOverlay = /avatar-overlay/i.test(href);
     return {
       title: document.title,
-      href: location.href,
+      href,
       markers,
+      avatarOverlay,
       codex: markers.shell && markers.sidebar,
     };
   })()`);
@@ -256,10 +261,48 @@ async function waitForCodexProbe(session, timeoutMs = 1800) {
   let probe = null;
   while (Date.now() < deadline) {
     probe = await probeSession(session);
-    if (probe?.codex) return probe;
+    if (probe?.codex || probe?.avatarOverlay) return probe;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return probe;
+}
+
+function payloadForProbe(bundle, probe) {
+  if (probe?.avatarOverlay) return bundle.overlayPayload || bundle.payload;
+  return bundle.payload;
+}
+
+export function earlyOverlayPayloadFor(payload, revision) {
+  return `(() => {
+    const generationKey = "__CODEX_QQ_SKIN_OVERLAY_EARLY_GENERATION__";
+    const appliedKey = "__CODEX_QQ_SKIN_OVERLAY_EARLY_APPLIED__";
+    const generation = ${JSON.stringify(revision)};
+    window[generationKey] = generation;
+    let observer = null;
+    let timeout = null;
+    const stop = () => {
+      observer?.disconnect();
+      observer = null;
+      if (timeout) clearTimeout(timeout);
+      timeout = null;
+    };
+    const install = () => {
+      if (window[generationKey] !== generation) { stop(); return true; }
+      if (!document.documentElement) return false;
+      if (!/avatar-overlay/i.test(String(location.href || ""))) return false;
+      if (!document.querySelector('[data-avatar-overlay-content-frame]')) return false;
+      stop();
+      ${payload};
+      window[appliedKey] = generation;
+      return true;
+    };
+    if (install()) return;
+    if (typeof MutationObserver === "function" && document.documentElement) {
+      observer = new MutationObserver(install);
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+    timeout = setTimeout(stop, 10000);
+  })()`;
 }
 
 async function connectTarget(target, port) {
@@ -278,7 +321,7 @@ async function connectCodexTargets(port, timeoutMs) {
         try {
           session = await connectTarget(target, port);
           const probe = await probeSession(session);
-          if (probe?.codex) connected.push({ target, session, probe });
+          if (probe?.codex || probe?.avatarOverlay) connected.push({ target, session, probe });
           else session.close();
         } catch (error) {
           session?.close();
@@ -358,10 +401,19 @@ async function loadTheme(themeDir) {
   if (raw.schemaVersion !== 1 || typeof raw.image !== "string" || !raw.image) {
     throw new Error(`${configPath} has an unsupported schema or image field`);
   }
-  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(raw.image)) {
-    throw new Error(`${configPath} has an invalid image field`);
-  }
-  if (path.basename(raw.image) !== raw.image) throw new Error("Theme image must stay inside its theme directory");
+  const assetName = (value, name) => {
+    if (value === undefined) return undefined;
+    if (typeof value !== "string" || !value || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value)) {
+      throw new Error(`${configPath} has an invalid ${name} field`);
+    }
+    if (path.basename(value) !== value) throw new Error(`Theme ${name} must stay inside its theme directory`);
+    if (value === "theme.json") throw new Error(`Theme ${name} must not replace theme.json`);
+    return value;
+  };
+  const imageName = assetName(raw.image, "image");
+  const petName = assetName(raw.pet, "pet");
+  const avatarName = assetName(raw.avatar, "avatar");
+  const overlayPetName = assetName(raw.overlayPet, "overlayPet");
   const text = (value, fallback, max, name) => {
     if (value === undefined) return fallback;
     if (typeof value !== "string" || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value)) {
@@ -402,6 +454,139 @@ async function loadTheme(themeDir) {
     if (typeof value !== "boolean") throw new Error(`${configPath} has an invalid ${name} field`);
     return value;
   };
+  const petFrameStates = new Set(["idle", "wave", "thinking", "working"]);
+  const petFrames = [];
+  if (raw.petFrames !== undefined) {
+    if (!Array.isArray(raw.petFrames) || raw.petFrames.length > 8) {
+      throw new Error(`${configPath} has an invalid petFrames field`);
+    }
+    for (const [index, frame] of raw.petFrames.entries()) {
+      if (!frame || typeof frame !== "object" || Array.isArray(frame)) {
+        throw new Error(`${configPath} has an invalid petFrames[${index}] field`);
+      }
+      const state = choice(frame.state, `petFrames[${index}].state`, [...petFrameStates]) ?? "idle";
+      const image = assetName(frame.image, `petFrames[${index}].image`);
+      petFrames.push({ state, image });
+    }
+  }
+  const overlayPetFrames = [];
+  if (raw.overlayPetFrames !== undefined) {
+    if (!Array.isArray(raw.overlayPetFrames) || raw.overlayPetFrames.length > 8) {
+      throw new Error(`${configPath} has an invalid overlayPetFrames field`);
+    }
+    for (const [index, frame] of raw.overlayPetFrames.entries()) {
+      if (!frame || typeof frame !== "object" || Array.isArray(frame)) {
+        throw new Error(`${configPath} has an invalid overlayPetFrames[${index}] field`);
+      }
+      const state = choice(frame.state, `overlayPetFrames[${index}].state`, [...petFrameStates]) ?? "idle";
+      if (frame.images !== undefined) {
+        if (!Array.isArray(frame.images) || frame.images.length < 1 || frame.images.length > 8) {
+          throw new Error(`${configPath} has an invalid overlayPetFrames[${index}].images field`);
+        }
+        const images = frame.images.map((image, imageIndex) =>
+          assetName(image, `overlayPetFrames[${index}].images[${imageIndex}]`));
+        overlayPetFrames.push({ state, images });
+        continue;
+      }
+      const image = assetName(frame.image, `overlayPetFrames[${index}].image`);
+      overlayPetFrames.push({ state, images: [image] });
+    }
+  }
+  const live2dRoles = new Set([
+    "base", "body", "head", "bangs", "hair", "hair-l", "hair-r",
+    "eyes-open", "eyes-closed", "blink", "accessory",
+  ]);
+  let overlayLive2D;
+  if (raw.overlayLive2D !== undefined) {
+    if (!raw.overlayLive2D || typeof raw.overlayLive2D !== "object" || Array.isArray(raw.overlayLive2D)) {
+      throw new Error(`${configPath} has an invalid overlayLive2D field`);
+    }
+    const width = Number(raw.overlayLive2D.width);
+    const height = Number(raw.overlayLive2D.height);
+    if (!Number.isFinite(width) || width < 64 || width > 2048) {
+      throw new Error(`${configPath} has an invalid overlayLive2D.width field`);
+    }
+    if (!Number.isFinite(height) || height < 64 || height > 2048) {
+      throw new Error(`${configPath} has an invalid overlayLive2D.height field`);
+    }
+    if (!Array.isArray(raw.overlayLive2D.layers) || raw.overlayLive2D.layers.length < 1 || raw.overlayLive2D.layers.length > 16) {
+      throw new Error(`${configPath} has an invalid overlayLive2D.layers field`);
+    }
+    const parseLive2DLayer = (layer, label) => {
+      if (!layer || typeof layer !== "object" || Array.isArray(layer)) {
+        throw new Error(`${configPath} has an invalid ${label} field`);
+      }
+      const image = assetName(layer.image, `${label}.image`);
+      const role = choice(layer.role, `${label}.role`, [...live2dRoles]) ?? "body";
+      const pivotX = unit(layer.pivotX, `${label}.pivotX`) ?? 0.5;
+      const pivotY = unit(layer.pivotY, `${label}.pivotY`) ?? 0.5;
+      const z = Number(layer.z);
+      if (!Number.isFinite(z) || z < -1000 || z > 1000) {
+        throw new Error(`${configPath} has an invalid ${label}.z field`);
+      }
+      const entry = {
+        id: text(layer.id, "layer", 40, `${label}.id`),
+        image,
+        role,
+        pivotX,
+        pivotY,
+        z: Math.round(z),
+      };
+      if (layer.amp !== undefined) {
+        const amp = Number(layer.amp);
+        if (!Number.isFinite(amp) || amp < 0 || amp > 4) {
+          throw new Error(`${configPath} has an invalid ${label}.amp field`);
+        }
+        entry.amp = amp;
+      }
+      if (layer.phase !== undefined) {
+        const phase = Number(layer.phase);
+        if (!Number.isFinite(phase) || phase < 0 || phase > 1) {
+          throw new Error(`${configPath} has an invalid ${label}.phase field`);
+        }
+        entry.phase = phase;
+      }
+      return entry;
+    };
+    const layers = raw.overlayLive2D.layers.map((layer, index) =>
+      parseLive2DLayer(layer, `overlayLive2D.layers[${index}]`));
+    overlayLive2D = { width: Math.round(width), height: Math.round(height), layers };
+    if (raw.overlayLive2D.eyeTop !== undefined) {
+      const eyeTop = Number(raw.overlayLive2D.eyeTop);
+      if (!Number.isFinite(eyeTop) || eyeTop < 0 || eyeTop > 1) {
+        throw new Error(`${configPath} has an invalid overlayLive2D.eyeTop field`);
+      }
+      overlayLive2D.eyeTop = eyeTop;
+    }
+    const petStates = new Set(["idle", "wave", "thinking", "working"]);
+    const defaultState = choice(
+      raw.overlayLive2D.defaultState,
+      "overlayLive2D.defaultState",
+      [...petStates],
+    ) ?? "idle";
+    overlayLive2D.defaultState = defaultState;
+    if (raw.overlayLive2D.states !== undefined) {
+      if (!raw.overlayLive2D.states || typeof raw.overlayLive2D.states !== "object"
+        || Array.isArray(raw.overlayLive2D.states)) {
+        throw new Error(`${configPath} has an invalid overlayLive2D.states field`);
+      }
+      const states = {};
+      for (const [stateName, pack] of Object.entries(raw.overlayLive2D.states)) {
+        if (!petStates.has(stateName)) {
+          throw new Error(`${configPath} has an invalid overlayLive2D.states key: ${stateName}`);
+        }
+        if (!pack || typeof pack !== "object" || Array.isArray(pack)
+          || !Array.isArray(pack.layers) || pack.layers.length < 1 || pack.layers.length > 16) {
+          throw new Error(`${configPath} has an invalid overlayLive2D.states.${stateName} field`);
+        }
+        states[stateName] = {
+          layers: pack.layers.map((layer, index) =>
+            parseLive2DLayer(layer, `overlayLive2D.states.${stateName}.layers[${index}]`)),
+        };
+      }
+      overlayLive2D.states = states;
+    }
+  }
   const rawColors = raw.colors && typeof raw.colors === "object" && !Array.isArray(raw.colors)
     ? raw.colors : null;
   const colorKeys = [
@@ -453,7 +638,7 @@ async function loadTheme(themeDir) {
     projectLabel: text(raw.projectLabel, "◉  选择项目", 80, "projectLabel"),
     statusText: text(raw.statusText, "QQ SKIN ONLINE", 80, "statusText"),
     quote: text(raw.quote, "MAKE SOMETHING WONDERFUL", 80, "quote"),
-    image: raw.image,
+    image: imageName,
     layout,
     sound,
     colorMode: rawColors ? "explicit" : "auto",
@@ -471,6 +656,12 @@ async function loadTheme(themeDir) {
       line: color(rawColors?.line, "rgba(124, 255, 70, .28)"),
     },
   };
+  if (petName) theme.pet = petName;
+  if (petFrames.length) theme.petFrames = petFrames;
+  if (avatarName) theme.avatar = avatarName;
+  if (overlayPetName) theme.overlayPet = overlayPetName;
+  if (overlayPetFrames.length) theme.overlayPetFrames = overlayPetFrames;
+  if (overlayLive2D) theme.overlayLive2D = overlayLive2D;
   if (appearance !== undefined) theme.appearance = appearance;
   if (Object.values(art).some((value) => value !== undefined)) {
     theme.art = Object.fromEntries(Object.entries(art).filter(([, value]) => value !== undefined));
@@ -512,7 +703,88 @@ async function loadTheme(themeDir) {
     if (art.length < 1 || art.length > MAX_ART_BYTES) {
       throw new Error(`Theme image must be a non-empty file no larger than ${MAX_ART_BYTES} bytes`);
     }
-    return { art, assetsRoot, extension, imagePath, theme };
+    const optionalAsset = async (filename, label) => {
+      if (!filename) return null;
+      const requestedPath = path.join(assetsRoot, filename);
+      let resolvedPath;
+      try {
+        resolvedPath = await fs.realpath(requestedPath);
+      } catch (error) {
+        if (error.code === "ENOENT") throw new Error(`Theme ${label} is missing: ${requestedPath}`);
+        throw error;
+      }
+      assertContainedPath(assetsRoot, resolvedPath, `Theme ${label}`);
+      const ext = path.extname(filename).toLowerCase();
+      if (![".png", ".webp"].includes(ext)) throw new Error(`Theme ${label} must be a PNG or WebP file`);
+      const stat = await fs.stat(resolvedPath);
+      let handle;
+      try {
+        handle = await fs.open(resolvedPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+      } catch (error) {
+        if (error.code === "ELOOP") throw new Error(`Theme ${label} changed into a symbolic link while loading`);
+        throw error;
+      }
+      try {
+        const opened = await handle.stat();
+        if (
+          !stat.isFile() || !opened.isFile() || stat.dev !== opened.dev || stat.ino !== opened.ino ||
+          opened.size < 1 || opened.size > MAX_ART_BYTES
+        ) {
+          throw new Error(`Theme ${label} must be a stable non-empty image no larger than ${MAX_ART_BYTES} bytes`);
+        }
+        const bytes = await handle.readFile();
+        if (bytes.length < 1 || bytes.length > MAX_ART_BYTES) {
+          throw new Error(`Theme ${label} must be a non-empty image no larger than ${MAX_ART_BYTES} bytes`);
+        }
+        return bytes;
+      } finally {
+        await handle.close();
+      }
+    };
+    const live2dLayerJobs = [];
+    for (const [index, layer] of (overlayLive2D?.layers || []).entries()) {
+      live2dLayerJobs.push({
+        group: "default",
+        index,
+        layer,
+        label: `overlayLive2D.layers[${index}]`,
+      });
+    }
+    for (const [stateName, pack] of Object.entries(overlayLive2D?.states || {})) {
+      for (const [index, layer] of (pack.layers || []).entries()) {
+        live2dLayerJobs.push({
+          group: stateName,
+          index,
+          layer,
+          label: `overlayLive2D.states.${stateName}.layers[${index}]`,
+        });
+      }
+    }
+    const [themePet, themeAvatar, themeOverlayPet, themePetFrames, themeOverlayPetFrames, themeOverlayLive2DLayerJobs] = await Promise.all([
+      optionalAsset(petName, "pet"),
+      optionalAsset(avatarName, "avatar"),
+      optionalAsset(overlayPetName, "overlayPet"),
+      Promise.all(petFrames.map(async (frame, index) => ({
+        state: frame.state,
+        image: frame.image,
+        bytes: await optionalAsset(frame.image, `petFrames[${index}]`),
+      }))),
+      Promise.all(overlayPetFrames.map(async (frame, index) => ({
+        state: frame.state,
+        images: frame.images,
+        bytesList: await Promise.all(frame.images.map((image, imageIndex) =>
+          optionalAsset(image, `overlayPetFrames[${index}].images[${imageIndex}]`))),
+      }))),
+      Promise.all(live2dLayerJobs.map(async (job) => ({
+        group: job.group,
+        ...job.layer,
+        bytes: await optionalAsset(job.layer.image, job.label),
+      }))),
+    ]);
+    return {
+      art, assetsRoot, extension, imagePath, theme, themePet, themeAvatar, themeOverlayPet,
+      themePetFrames, themeOverlayPetFrames, themeOverlayLive2DLayerJobs,
+    };
   } finally {
     await imageHandle.close();
   }
@@ -525,6 +797,7 @@ async function loadStaticPayloadAssets() {
       fs.readFile(path.join(root, "assets", "qq-skin.css"), "utf8"),
       fs.readFile(path.join(root, "assets", "custom-skin.css"), "utf8"),
       fs.readFile(path.join(root, "assets", "renderer-inject.js"), "utf8"),
+      fs.readFile(path.join(root, "assets", "avatar-overlay-inject.js"), "utf8"),
       fs.readFile(path.join(root, "assets", "portal-hero.png")),
       fs.readFile(path.join(root, "assets", "theme.json"), "utf8"),
       fs.readFile(path.join(root, "assets", "codex-pet.png")),
@@ -536,9 +809,13 @@ async function loadStaticPayloadAssets() {
       throw error;
     });
   }
-  const [css, customCss, template, qqArt, qqThemeJson, pet, retroFrame, qqAvatar, coughAudio] = await staticPayloadAssets;
+  const [
+    css, customCss, template, overlayTemplate, qqArt, qqThemeJson, pet, retroFrame, qqAvatar, coughAudio,
+  ] = await staticPayloadAssets;
   const qqTheme = JSON.parse(qqThemeJson);
-  return { css, customCss, template, qqArt, qqTheme, pet, retroFrame, qqAvatar, coughAudio, cacheHit };
+  return {
+    css, customCss, template, overlayTemplate, qqArt, qqTheme, pet, retroFrame, qqAvatar, coughAudio, cacheHit,
+  };
 }
 
 function invalidateStaticPayloadAssets() {
@@ -754,8 +1031,18 @@ async function loadPayload(themeDir) {
     loadStaticPayloadAssets(),
     loadTheme(themeDir),
   ]);
-  const { css, customCss, template, qqArt, qqTheme, pet, retroFrame, qqAvatar, coughAudio } = staticAssets;
-  const { art, extension, theme, deepAssets = {} } = loaded;
+  const { css, customCss, template, overlayTemplate, qqArt, qqTheme, pet, retroFrame, qqAvatar, coughAudio } = staticAssets;
+  const {
+    art, extension, theme, deepAssets = {}, themePet, themeAvatar, themeOverlayPet,
+    themePetFrames = [], themeOverlayPetFrames = [], themeOverlayLive2DLayerJobs = [],
+  } = loaded;
+  const activeQQTheme = qqTheme;
+  const activeQQArt = qqArt;
+  const mikuTheme = theme?.id === "preset-candy-miku" ? theme : null;
+  const mikuArt = theme?.id === "preset-candy-miku" ? art : qqArt;
+  const activePet = themePet || pet;
+  const activeOverlayPet = themeOverlayPet || themePet || pet;
+  const activeQQAvatar = themeAvatar || qqAvatar;
   const styleRevision = createHash("sha256").update(css).update(customCss).digest("hex").slice(0, 20);
   const artMetadata = readImageMetadata(art, extension);
   if (!artMetadata) {
@@ -767,10 +1054,67 @@ async function loadPayload(themeDir) {
   const mime = extension === ".jpg" || extension === ".jpeg" ? "image/jpeg"
     : extension === ".webp" ? "image/webp" : "image/png";
   const artDataUrl = `data:${mime};base64,${art.toString("base64")}`;
-  const qqArtDataUrl = `data:image/png;base64,${qqArt.toString("base64")}`;
-  const petDataUrl = `data:image/png;base64,${pet.toString("base64")}`;
+  const qqArtDataUrl = `data:image/png;base64,${activeQQArt.toString("base64")}`;
+  const stablePetDataUrl = `data:image/png;base64,${pet.toString("base64")}`;
+  const petDataUrl = `data:image/png;base64,${activePet.toString("base64")}`;
+  const overlayPetMime = mimeForExtension(path.extname(theme?.overlayPet || "").toLowerCase() || ".png");
+  const overlayPetDataUrl = `data:${overlayPetMime};base64,${activeOverlayPet.toString("base64")}`;
+  const petFrameDataUrls = themePetFrames
+    .filter((frame) => frame?.bytes?.length)
+    .map((frame) => ({
+      state: frame.state,
+      image: frame.image,
+      url: `data:image/png;base64,${frame.bytes.toString("base64")}`,
+    }));
+  const overlayPetFrameDataUrls = themeOverlayPetFrames
+    .map((frame) => {
+      const urls = (frame.bytesList || [])
+        .filter((bytes) => bytes?.length)
+        .map((bytes) => `data:image/png;base64,${bytes.toString("base64")}`);
+      if (!urls.length) return null;
+      return { state: frame.state, urls };
+    })
+    .filter(Boolean);
+  const toLive2DLayerPayload = (layer) => ({
+    id: layer.id,
+    role: layer.role,
+    pivotX: layer.pivotX,
+    pivotY: layer.pivotY,
+    z: layer.z,
+    amp: layer.amp,
+    phase: layer.phase,
+    image: `data:${mimeForExtension(path.extname(layer.image).toLowerCase() || ".png")};base64,${layer.bytes.toString("base64")}`,
+  });
+  const defaultLive2DLayers = themeOverlayLive2DLayerJobs
+    .filter((layer) => layer?.group === "default" && layer?.bytes?.length)
+    .map(toLive2DLayerPayload);
+  const live2DStates = {};
+  for (const layer of themeOverlayLive2DLayerJobs) {
+    if (!layer?.bytes?.length || layer.group === "default") continue;
+    if (!live2DStates[layer.group]) live2DStates[layer.group] = { layers: [] };
+    live2DStates[layer.group].layers.push(toLive2DLayerPayload(layer));
+  }
+  const overlayLive2DLayers = (live2DStates.idle?.layers?.length
+    ? live2DStates.idle.layers
+    : defaultLive2DLayers);
+  const overlayLive2DPayload = theme?.overlayLive2D && (overlayLive2DLayers.length || Object.keys(live2DStates).length)
+    ? {
+      width: theme.overlayLive2D.width,
+      height: theme.overlayLive2D.height,
+      eyeTop: Number.isFinite(Number(theme.overlayLive2D.eyeTop))
+        ? Number(theme.overlayLive2D.eyeTop)
+        : undefined,
+      defaultState: theme.overlayLive2D.defaultState || "idle",
+      layers: overlayLive2DLayers.length ? overlayLive2DLayers : defaultLive2DLayers,
+      states: Object.keys(live2DStates).length ? live2DStates : undefined,
+    }
+    : null;
+  if (overlayLive2DPayload && !(overlayLive2DPayload.layers?.length)) {
+    overlayLive2DPayload.layers = [];
+  }
   const retroFrameDataUrl = `data:image/png;base64,${retroFrame.toString("base64")}`;
-  const qqAvatarDataUrl = `data:image/png;base64,${qqAvatar.toString("base64")}`;
+  const stableAvatarDataUrl = `data:image/png;base64,${qqAvatar.toString("base64")}`;
+  const qqAvatarDataUrl = `data:image/png;base64,${activeQQAvatar.toString("base64")}`;
   const coughAudioDataUrl = `data:audio/mpeg;base64,${coughAudio.toString("base64")}`;
   const deepThemeAssets = Object.fromEntries(Object.entries(deepAssets)
     .filter(([key]) => key !== "background")
@@ -785,25 +1129,70 @@ async function loadPayload(themeDir) {
     .replace("__CUSTOM_SKIN_CSS_JSON__", JSON.stringify(customCss))
     .replace("__QQ_SKIN_ART_JSON__", JSON.stringify(artDataUrl))
     .replace("__QQ_STABLE_ART_JSON__", JSON.stringify(qqArtDataUrl))
+    .replace("__QQ_STABLE_PET_JSON__", JSON.stringify(stablePetDataUrl))
     .replace("__QQ_SKIN_PET_JSON__", JSON.stringify(petDataUrl))
+    .replace("__QQ_SKIN_PET_FRAMES_JSON__", JSON.stringify(petFrameDataUrls))
     .replace("__QQ_SKIN_RETRO_FRAME_JSON__", JSON.stringify(retroFrameDataUrl))
+    .replace("__QQ_STABLE_AVATAR_JSON__", JSON.stringify(stableAvatarDataUrl))
     .replace("__QQ_SKIN_QQ_AVATAR_JSON__", JSON.stringify(qqAvatarDataUrl))
     .replace("__QQ_SKIN_COUGH_AUDIO_JSON__", JSON.stringify(coughAudioDataUrl))
     .replace("__QQ_SKIN_DEEP_ASSETS_JSON__", JSON.stringify(deepThemeAssets))
     .replace("__QQ_SKIN_THEME_JSON__", JSON.stringify(theme))
-    .replace("__QQ_STABLE_THEME_JSON__", JSON.stringify(qqTheme))
+    .replace("__QQ_STABLE_THEME_JSON__", JSON.stringify(activeQQTheme))
+    .replace("__QQ_MIKU_THEME_JSON__", JSON.stringify(mikuTheme))
     .replace("__QQ_SKIN_LIBRARY_JSON__", JSON.stringify(libraryThemes))
     .replace("__QQ_SKIN_VERSION_JSON__", JSON.stringify(SKIN_VERSION))
     .replace("__QQ_SKIN_STYLE_REVISION_JSON__", JSON.stringify(styleRevision));
-  const revision = createHash("sha256")
+  const overlayPayload = overlayTemplate
+    .replace("__QQ_SKIN_OVERLAY_PET_JSON__", JSON.stringify(overlayPetDataUrl))
+    .replace("__QQ_SKIN_OVERLAY_PET_FRAMES_JSON__", JSON.stringify(overlayPetFrameDataUrls))
+    .replace("__QQ_SKIN_OVERLAY_LIVE2D_JSON__", JSON.stringify(
+      overlayLive2DPayload?.layers?.length ? overlayLive2DPayload : null,
+    ));
+  const revisionHash = createHash("sha256");
+  revisionHash
     .update(SKIN_VERSION)
     .update(css)
     .update(customCss)
     .update(template)
-    .update(qqArt)
-    .update(JSON.stringify(qqTheme))
+    .update(overlayTemplate)
+    .update(activeQQArt)
+    .update(JSON.stringify(activeQQTheme))
+    .update(mikuArt)
+    .update(JSON.stringify(mikuTheme))
     .update(pet)
+    .update(activePet)
+    .update(activeOverlayPet)
+    .update(JSON.stringify(petFrameDataUrls.map((frame) => ({ state: frame.state, image: frame.image }))));
+  for (const frame of petFrameDataUrls) revisionHash.update(frame.url);
+  revisionHash.update(JSON.stringify(overlayPetFrameDataUrls.map((frame) => ({
+    state: frame.state,
+    count: frame.urls.length,
+  }))));
+  for (const frame of overlayPetFrameDataUrls) {
+    for (const url of frame.urls) revisionHash.update(url);
+  }
+  if (overlayLive2DPayload?.layers?.length) {
+    revisionHash.update(JSON.stringify({
+      width: overlayLive2DPayload.width,
+      height: overlayLive2DPayload.height,
+      defaultState: overlayLive2DPayload.defaultState,
+      layers: overlayLive2DPayload.layers.map((layer) => ({
+        id: layer.id, role: layer.role, z: layer.z, pivotX: layer.pivotX, pivotY: layer.pivotY, amp: layer.amp,
+      })),
+      states: Object.fromEntries(Object.entries(overlayLive2DPayload.states || {}).map(([name, pack]) => [
+        name,
+        (pack.layers || []).map((layer) => ({ id: layer.id, role: layer.role, z: layer.z })),
+      ])),
+    }));
+    for (const layer of overlayLive2DPayload.layers) revisionHash.update(layer.image);
+    for (const pack of Object.values(overlayLive2DPayload.states || {})) {
+      for (const layer of pack.layers || []) revisionHash.update(layer.image);
+    }
+  }
+  const revision = revisionHash
     .update(retroFrame)
+    .update(activeQQAvatar)
     .update(qqAvatar)
     .update(coughAudio)
     .update(deepAssetRevision)
@@ -813,12 +1202,14 @@ async function loadPayload(themeDir) {
     .slice(0, 20);
   return {
     imageBytes: art.length,
-    petBytes: pet.length,
+    petBytes: activePet.length,
+    overlayPetBytes: activeOverlayPet.length,
     frameBytes: retroFrame.length,
-    qqAvatarBytes: qqAvatar.length,
+    qqAvatarBytes: activeQQAvatar.length,
     coughAudioBytes: coughAudio.length,
     deepAssetBytes: Object.values(deepAssets).reduce((sum, asset) => sum + asset.bytes.length, 0),
     payload,
+    overlayPayload,
     revision,
     theme,
     timings: {
@@ -972,6 +1363,23 @@ async function waitForVerifiedSession(session, timeoutMs) {
   return lastResult;
 }
 
+async function verifyOverlaySession(session) {
+  return session.evaluate(`(() => {
+    const style = document.getElementById('codex-qq-skin-avatar-overlay-style');
+    const img = document.getElementById('codex-qq-skin-avatar-overlay-img');
+    const canvas = document.getElementById('codex-qq-skin-avatar-overlay-canvas');
+    const state = window.__CODEX_QQ_SKIN_AVATAR_OVERLAY__;
+    return {
+      installed: Boolean(state?.installed),
+      stylePresent: Boolean(style),
+      imgPresent: Boolean(img),
+      canvasPresent: Boolean(canvas),
+      mode: state?.mode || null,
+      pass: Boolean(state?.installed && style && (img || canvas)),
+    };
+  })()`);
+}
+
 async function capture(session, outputPath) {
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   const bestEffortInput = async (method, params) => {
@@ -1006,31 +1414,39 @@ async function capture(session, outputPath) {
 async function runOneShot(options) {
   const connected = await connectCodexTargets(options.port, options.timeoutMs);
   const loaded = (options.mode === "once" || options.reload) ? await loadPayload(options.themeDir) : null;
-  const payload = loaded?.payload ?? null;
   const results = [];
   let screenshotCaptured = false;
 
   for (const { target, session, probe } of connected) {
     try {
+      const payload = loaded ? payloadForProbe(loaded, probe) : null;
       if (options.mode === "remove") await removeFromSession(session);
       else if (options.mode === "once") {
-        await applyToSession(session, payload, { enableSkin: options.enableSkin, skinMode: options.skinMode });
+        await applyToSession(session, payload, {
+          enableSkin: options.enableSkin && !probe?.avatarOverlay,
+          skinMode: probe?.avatarOverlay ? null : options.skinMode,
+        });
       }
 
       if (options.reload) {
         await session.send("Page.reload", { ignoreCache: true });
         await new Promise((resolve) => setTimeout(resolve, 1600));
         if (options.mode !== "remove") {
-          await applyToSession(session, payload, { enableSkin: options.enableSkin, skinMode: options.skinMode });
+          await applyToSession(session, payload, {
+            enableSkin: options.enableSkin && !probe?.avatarOverlay,
+            skinMode: probe?.avatarOverlay ? null : options.skinMode,
+          });
         }
       }
 
       const result = options.mode === "remove"
         ? await verifyRemovedSession(session)
-        : await waitForVerifiedSession(session, options.timeoutMs);
+        : probe?.avatarOverlay
+          ? await verifyOverlaySession(session)
+          : await waitForVerifiedSession(session, options.timeoutMs);
       results.push({ targetId: target.id, title: target.title, url: target.url, probe, result });
 
-      if (options.screenshot && !screenshotCaptured) {
+      if (options.screenshot && !screenshotCaptured && !probe?.avatarOverlay) {
         await capture(session, options.screenshot);
         screenshotCaptured = true;
       }
@@ -1040,7 +1456,10 @@ async function runOneShot(options) {
   }
 
   console.log(JSON.stringify({ mode: options.mode, version: SKIN_VERSION, port: options.port, targets: results }, null, 2));
-  const failed = results.length === 0 || results.some((item) => options.mode === "remove" ? item.result !== true : !item.result?.pass);
+  // Prefer the main Codex shell result; overlay is best-effort companion.
+  const mainResults = results.filter((item) => !item.probe?.avatarOverlay);
+  const check = mainResults.length ? mainResults : results;
+  const failed = check.length === 0 || check.some((item) => options.mode === "remove" ? item.result !== true : !item.result?.pass);
   if (failed) process.exitCode = 2;
 }
 
@@ -1089,6 +1508,7 @@ function watchPayloadSources(themeDir, onDirty) {
         const name = filename ? String(filename) : "";
         const staticChanged = directory === assetsRoot &&
           (!name || name === "qq-skin.css" || name === "custom-skin.css" || name === "renderer-inject.js" ||
+            name === "avatar-overlay-inject.js" ||
             name === "portal-hero.png" || name === "theme.json" ||
             name === "codex-pet.png" || name === "retro-window-frame.png" ||
             name === "qq-avatar.png" || name === "audio");
@@ -1176,6 +1596,7 @@ async function runWatch(options) {
     usageRefreshPromise = refreshUsage().finally(() => { usageRefreshPromise = null; });
     return usageRefreshPromise;
   };
+  queueUsageRefresh(true);
 
   const refreshPayload = async () => {
     const next = await loadPayload(options.themeDir);
@@ -1185,7 +1606,15 @@ async function runWatch(options) {
       const { session } = record;
       if (session.closed) continue;
       try {
-        const nextIdentifier = await registerEarly(session, current.payload, current.revision);
+        const targetPayload = record.avatarOverlay
+          ? (current.overlayPayload || current.payload)
+          : current.payload;
+        const earlySource = record.avatarOverlay
+          ? earlyOverlayPayloadFor(targetPayload, current.revision)
+          : earlyPayloadFor(targetPayload, current.revision);
+        const nextIdentifier = await session.send("Page.addScriptToEvaluateOnNewDocument", {
+          source: earlySource,
+        }).then((result) => result?.identifier ?? null);
         if (record.earlyScriptId) {
           await session.send("Page.removeScriptToEvaluateOnNewDocument", {
             identifier: record.earlyScriptId,
@@ -1193,8 +1622,8 @@ async function runWatch(options) {
         }
         record.earlyScriptId = nextIdentifier;
         record.needsLoadFallback = !nextIdentifier;
-        await applyToSession(session, current.payload);
-        await pushUsageSnapshot(session, usageSnapshot);
+        await applyToSession(session, targetPayload);
+        if (!record.avatarOverlay) await pushUsageSnapshot(session, usageSnapshot);
       } catch (error) {
         record.needsLoadFallback = true;
         console.error(`[qq-skin] theme refresh failed: ${error.message}`);
@@ -1224,6 +1653,12 @@ async function runWatch(options) {
         requested = await record.session.evaluate(`(() => {
           try {
             const key = "codex-qq-skin-usage-refresh";
+            const memoryValue = window.__CODEX_QQ_SKIN_USAGE_REFRESH_REQUESTED_AT__ || "";
+            if (memoryValue) {
+              window.__CODEX_QQ_SKIN_USAGE_REFRESH_REQUESTED_AT__ = "";
+              try { window.localStorage?.removeItem(key); } catch {}
+              return true;
+            }
             const value = window.localStorage?.getItem(key);
             if (!value) return false;
             window.localStorage.removeItem(key);
@@ -1233,6 +1668,15 @@ async function runWatch(options) {
       } catch {}
       if (requested) {
         nextUsageRefreshAt = 0;
+        const loadingSnapshot = sanitizeUsageSnapshot({
+          ...usageSnapshot,
+          status: "loading",
+          stale: Boolean(usageSnapshot?.totals),
+          generatedAt: new Date().toISOString(),
+        });
+        for (const pendingRecord of sessions.values()) {
+          if (!pendingRecord.session.closed) await pushUsageSnapshot(pendingRecord.session, loadingSnapshot).catch(() => {});
+        }
         queueUsageRefresh(true);
         return;
       }
@@ -1308,7 +1752,12 @@ async function runWatch(options) {
         let record;
         try {
           session = await connectTarget(target, options.port);
-          record = { session, earlyScriptId: null, needsLoadFallback: false };
+          record = {
+            session,
+            earlyScriptId: null,
+            needsLoadFallback: false,
+            avatarOverlay: false,
+          };
           try {
             record.earlyScriptId = await registerEarly(session, current.payload, current.revision);
             await session.evaluate(earlyPayloadFor(current.payload, current.revision));
@@ -1317,7 +1766,7 @@ async function runWatch(options) {
             console.error(`[qq-skin] early injection unavailable: ${error.message}`);
           }
           const probe = await waitForCodexProbe(session);
-          if (!probe?.codex) {
+          if (!probe?.codex && !probe?.avatarOverlay) {
             await removeEarly(record);
             session.close();
             if (!rejected.has(target.id)) {
@@ -1327,29 +1776,56 @@ async function runWatch(options) {
             continue;
           }
           rejected.delete(target.id);
+          const targetPayload = payloadForProbe(current, probe);
+          const isOverlay = Boolean(probe?.avatarOverlay);
+          record.avatarOverlay = isOverlay;
+          if (isOverlay) {
+            try {
+              const earlySource = earlyOverlayPayloadFor(targetPayload, current.revision);
+              const nextIdentifier = await session.send("Page.addScriptToEvaluateOnNewDocument", {
+                source: earlySource,
+              }).then((result) => result?.identifier ?? null);
+              await removeEarly(record);
+              record.earlyScriptId = nextIdentifier;
+              await session.evaluate(earlySource);
+            } catch (error) {
+              record.needsLoadFallback = true;
+              console.error(`[qq-skin] overlay early injection unavailable: ${error.message}`);
+            }
+          }
           session.on("Page.loadEventFired", () => {
             setTimeout(async () => {
               if (record.needsLoadFallback) {
-                await applyToSession(session, current.payload).catch((error) => {
+                await applyToSession(session, targetPayload).catch((error) => {
                   console.error(`[qq-skin] fallback reinject failed: ${error.message}`);
                 });
               }
-              await pushUsageSnapshot(session, usageSnapshot).catch(() => {});
+              if (!isOverlay) await pushUsageSnapshot(session, usageSnapshot).catch(() => {});
             }, 0);
           });
           const earlyApplied = await session.evaluate(
-            `window.__CODEX_QQ_SKIN_EARLY_APPLIED__ === ${JSON.stringify(current.revision)}`,
+            isOverlay
+              ? `window.__CODEX_QQ_SKIN_OVERLAY_EARLY_APPLIED__ === ${JSON.stringify(current.revision)}`
+              : `window.__CODEX_QQ_SKIN_EARLY_APPLIED__ === ${JSON.stringify(current.revision)}`,
           );
           if (!earlyApplied) {
-            await session.evaluate(
-              `window.__CODEX_QQ_SKIN_EARLY_GENERATION__ = ${JSON.stringify(`fallback:${current.revision}`)}`,
-            );
-            await applyToSession(session, current.payload);
+            if (isOverlay) {
+              await session.evaluate(
+                `window.__CODEX_QQ_SKIN_OVERLAY_EARLY_GENERATION__ = ${JSON.stringify(`fallback:${current.revision}`)}`,
+              );
+            } else {
+              await session.evaluate(
+                `window.__CODEX_QQ_SKIN_EARLY_GENERATION__ = ${JSON.stringify(`fallback:${current.revision}`)}`,
+              );
+            }
+            await applyToSession(session, targetPayload);
           }
-          await pushUsageSnapshot(session, usageSnapshot);
+          if (!isOverlay) await pushUsageSnapshot(session, usageSnapshot);
           sessions.set(target.id, record);
-          queueUsageRefresh(usageSnapshot.status === "loading");
-          console.log(`[qq-skin] injected verified Codex target ${target.id} (${target.title || target.url})`);
+          if (!isOverlay) queueUsageRefresh(usageSnapshot.status === "loading");
+          console.log(
+            `[qq-skin] injected verified ${isOverlay ? "avatar-overlay" : "Codex"} target ${target.id} (${target.title || target.url})`,
+          );
         } catch (error) {
           if (record) await removeEarly(record);
           session?.close();
@@ -1359,7 +1835,7 @@ async function runWatch(options) {
       await pollLibrarySwitchRequests();
       await pollUsageRefreshRequests();
       for (const record of sessions.values()) {
-        if (record.session.closed) continue;
+        if (record.session.closed || record.avatarOverlay) continue;
         try {
           const active = await record.session.evaluate(`(() => ({
             mode: window.__CODEX_QQ_SKIN_STATE__?.skinMode ?? null,

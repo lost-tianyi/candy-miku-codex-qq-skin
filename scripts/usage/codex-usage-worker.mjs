@@ -66,6 +66,15 @@ function writeJsonAtomic(filePath, value) {
   }
 }
 
+function tryWriteJsonAtomic(filePath, value) {
+  try {
+    writeJsonAtomic(filePath, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function normalizedHeartbeatDates(values, todayKey) {
   return [...new Set(Array.isArray(values) ? values : [])]
     .filter((key) => /^\d{4}-\d{2}-\d{2}$/.test(String(key)) && key <= todayKey)
@@ -73,7 +82,6 @@ function normalizedHeartbeatDates(values, todayKey) {
 }
 
 export async function createUsageSnapshot({ stateDir = defaultStateDir(), now = new Date() } = {}) {
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const snapshotPath = path.join(stateDir, "snapshot-v1.json");
   const growthPath = path.join(stateDir, "growth-v1.json");
   const previous = readJson(snapshotPath, null);
@@ -104,7 +112,7 @@ export async function createUsageSnapshot({ stateDir = defaultStateDir(), now = 
         highestLevel: Math.max(Number(growthState.highestLevel) || 0, snapshot.growth.level),
         updatedAt: now.toISOString(),
       };
-      writeJsonAtomic(growthPath, nextGrowth);
+      tryWriteJsonAtomic(growthPath, nextGrowth);
     }
   } catch (error) {
     snapshot = errorSnapshot(previous, error?.message, now);
@@ -113,7 +121,7 @@ export async function createUsageSnapshot({ stateDir = defaultStateDir(), now = 
   if (snapshot?.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
     snapshot = errorSnapshot(null, "usage snapshot schema mismatch", now);
   }
-  writeJsonAtomic(snapshotPath, snapshot);
+  tryWriteJsonAtomic(snapshotPath, snapshot);
   return snapshot;
 }
 
