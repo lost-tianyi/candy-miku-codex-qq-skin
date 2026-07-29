@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "qq-stable-default",
+  "kind": "qq-stable",
+  "name": "QQ Skin",
+  "brandSubtitle": "CODEX QQ SKIN",
+  "tagline": "滴滴！QQ 皮肤已上线，今天也和 Codex 一起把 Bug 聊下线。",
+  "projectPrefix": "选择项目 · ",
+  "projectLabel": "◉  选择项目",
+  "statusText": "THEME ONLINE",
+  "quote": "Make something wonderful",
+  "image": "portal-hero.png",
+  "appearance": "light",
+  "art": {
+    "safeArea": "center",
+    "taskMode": "off"
+  },
+  "layout": {
+    "mode": "classic-three-pane",
+    "rightPanel": "open",
+    "minWidth": 1180,
+    "rightWidth": 300
+  },
+  "sound": {
+    "enabled": true,
+    "volume": 0.48,
+    "completed": "cough",
+    "approval": "alert",
+    "online": "knock"
+  },
+  "colors": {
+    "background": "#eaf6ff",
+    "panel": "#ffffff",
+    "panelAlt": "#e2f0fc",
+    "accent": "#2f7dcc",
+    "accentAlt": "#5ba7ec",
+    "secondary": "#76b8ee",
+    "highlight": "#1f64ad",
+    "text": "#17395f",
+    "muted": "#587795",
+    "line": "rgba(54, 112, 174, .30)"
+  },
+  "promoTitle": "感谢 Passion8 赞助",
+  "promoSub": "passion8.cc",
+  "promoUrl": "https://passion8.cc/register?aff=TuPe"
+}

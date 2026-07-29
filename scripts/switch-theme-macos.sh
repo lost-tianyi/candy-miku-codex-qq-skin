@@ -1,0 +1,120 @@
+#!/bin/bash
+
+# Switch to a theme pack under themes/<id>/ — hot path when CDP is live.
+
+set -euo pipefail
+. "$(cd "$(dirname "$0")" && pwd -P)/common-macos.sh"
+
+THEME_ID=""
+APPLY_NOW="true"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --id) THEME_ID="${2:-}"; shift 2 ;;
+    --no-apply) APPLY_NOW="false"; shift ;;
+    *) fail "Unknown argument: $1" ;;
+  esac
+done
+
+[ -n "$THEME_ID" ] || fail "Usage: switch-theme-macos.sh --id <theme-id>"
+case "$THEME_ID" in
+  *[!A-Za-z0-9_-]*|'') fail "Theme id may contain only letters, numbers, underscores, and hyphens." ;;
+esac
+[ "${#THEME_ID}" -le 80 ] || fail "Theme id is too long."
+
+ensure_state_root
+THEMES_ROOT="$STATE_ROOT/themes"
+SRC="$THEMES_ROOT/$THEME_ID"
+[ -d "$SRC" ] || fail "Theme not found: $THEME_ID"
+[ -f "$SRC/theme.json" ] || fail "theme.json missing in $THEME_ID"
+ensure_node_runtime
+themes_root_real="$(cd "$THEMES_ROOT" && pwd -P)"
+src_real="$(cd "$SRC" && pwd -P)"
+case "$src_real/" in "$themes_root_real/"*) ;; *) fail "Theme directory escapes the saved theme library." ;; esac
+
+progress() {
+  printf '%s\n' "$*" >&2
+  notify_user "$*"
+}
+
+progress "Switching..."
+
+stage="$(/usr/bin/mktemp -d "$STATE_ROOT/.theme-switch.XXXXXX")"
+cleanup_stage() { /bin/rm -rf "$stage"; }
+trap cleanup_stage EXIT
+/bin/mkdir -p "$THEME_DIR"
+/bin/chmod 700 "$stage"
+# Snapshot theme.json and its referenced image from stable, no-follow file
+# descriptors. This closes the validation/copy TOCTOU window: after this
+# command returns, edits or symlink swaps in themes/<id> cannot mix the pair
+# that will be published to the live theme directory.
+THEME_IMAGE="$("$NODE" "$SCRIPT_DIR/stage-theme.mjs" "$SRC" "$stage")" \
+  || fail "Theme pack changed or failed staging: $THEME_ID"
+# Validate the exact staged pair, not the mutable library directory. The
+# injector performs the full schema, path, dimensions, and image checks.
+"$NODE" "$INJECTOR" --check-payload --theme-dir "$stage" >/dev/null \
+  || fail "Theme pack failed validation: $THEME_ID"
+THEME_BYTES="$(/usr/bin/stat -f '%z' "$stage/$THEME_IMAGE")"
+[ "$THEME_BYTES" -gt 0 ] && [ "$THEME_BYTES" -le 16777216 ] \
+  || fail "Theme image must be non-empty and no larger than 16 MB."
+/bin/chmod 600 "$stage/"*
+for entry in "$stage/"*; do
+  [ -f "$entry" ] || continue
+  [ "$(/usr/bin/basename "$entry")" = "theme.json" ] && continue
+  /bin/mv -f "$entry" "$THEME_DIR/"
+done
+# theme.json is the commit marker: the watcher never observes a config that
+# references a partially copied image.
+/bin/mv -f "$stage/theme.json" "$THEME_DIR/theme.json"
+KEEP_FILES="|theme.json|$THEME_IMAGE|"
+SCHEMA_VERSION="$("$NODE" -e 'const t=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(String(t.schemaVersion||1))' "$THEME_DIR/theme.json")"
+if [ "$SCHEMA_VERSION" = "2" ]; then
+  KEEP_FILES="|theme.json|$("$NODE" -e 'const t=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(Object.values(t.assets||{}).join("|"))' "$THEME_DIR/theme.json")|"
+else
+  EXTRA_THEME_FILES="$("$NODE" -e 'const path=require("path");const t=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const files=["pet","avatar","overlayPet"].map(k=>typeof t[k]==="string"?path.basename(t[k]):"");for(const frame of [...(Array.isArray(t.petFrames)?t.petFrames:[]),...(Array.isArray(t.overlayPetFrames)?t.overlayPetFrames:[])]){ if(!frame) continue; if(typeof frame.image==="string") files.push(path.basename(frame.image)); if(Array.isArray(frame.images)) for(const image of frame.images) if(typeof image==="string") files.push(path.basename(image)); } const pushLayers=(layers)=>{ for(const layer of (Array.isArray(layers)?layers:[])){ if(layer&&typeof layer.image==="string") files.push(path.basename(layer.image)); } }; pushLayers(t.overlayLive2D&&t.overlayLive2D.layers); for(const pack of Object.values((t.overlayLive2D&&t.overlayLive2D.states)||{})) pushLayers(pack&&pack.layers); process.stdout.write(files.filter(Boolean).join("|"))' "$THEME_DIR/theme.json")"
+  [ -n "$EXTRA_THEME_FILES" ] && KEEP_FILES="${KEEP_FILES}${EXTRA_THEME_FILES}|"
+fi
+for entry in "$THEME_DIR"/*; do
+  [ -f "$entry" ] || continue
+  name="$(/usr/bin/basename "$entry")"
+  case "$KEEP_FILES" in *"|$name|"*) ;; *) /bin/rm -f "$entry" ;; esac
+done
+/bin/rm -rf "$stage"
+trap - EXIT
+
+THEME_NAME="$("$NODE" -e 'try{const t=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(t.name||"")}catch{}' "$THEME_DIR/theme.json" 2>/dev/null || true)"
+[ -n "$THEME_NAME" ] || THEME_NAME="$THEME_ID"
+THEME_KIND="$("$NODE" -e 'try{const t=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(t.kind||"")}catch{}' "$THEME_DIR/theme.json" 2>/dev/null || true)"
+THEME_JSON_ID="$("$NODE" -e 'try{const t=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(t.id||"")}catch{}' "$THEME_DIR/theme.json" 2>/dev/null || true)"
+SKIN_MODE="custom"
+[ "$THEME_KIND" = "qq-stable" ] && SKIN_MODE="qq"
+# Candy Miku is a product skin: companion petFrames only activate in miku mode.
+if [ "$THEME_ID" = "preset-candy-miku" ] || [ "$THEME_JSON_ID" = "preset-candy-miku" ]; then
+  SKIN_MODE="miku"
+fi
+
+if [ "$APPLY_NOW" != "true" ]; then
+  progress "Ready: ${THEME_NAME} (not applied)"
+  exit 0
+fi
+
+PORT=9341
+if [ -f "$STATE_PATH" ]; then
+  saved="$(state_field port 2>/dev/null || true)"
+  [ -n "${saved:-}" ] && PORT="$saved"
+fi
+
+# Hot path: CDP already open → seconds, not tens of seconds
+if hot_reapply_theme "$PORT" 8000 "$SKIN_MODE"; then
+  progress "Done: ${THEME_NAME}"
+  exit 0
+fi
+
+# Cold path only when debug port is missing
+progress "CDP not ready, full start..."
+if "$SCRIPT_DIR/start-qq-skin-macos.sh" --port "$PORT" --restart-existing --skin-mode "$SKIN_MODE"; then
+  progress "Done: ${THEME_NAME}"
+  exit 0
+fi
+
+alert_user "Theme switched but inject failed. Click Apply Skin."
+exit 1
